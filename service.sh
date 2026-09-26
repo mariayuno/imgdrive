@@ -33,17 +33,16 @@ done
 # before touching /sdcard or attempting any mounts.
 # ---------------------------------------------------------------------------
 _log "Waiting for CE storage decryption (sys.user.0.ce_available)..."
-i=0
 while true; do
     ce="$(getprop sys.user.0.ce_available 2>/dev/null)"
     [ "$ce" = "1" ] && break
-    # Fallback: older Android versions use vold.decrypt
     vd="$(getprop vold.decrypt 2>/dev/null)"
     [ "$vd" = "trigger_restart_framework" ] && break
     if [ "$i" -eq 0 ]; then
         _log "CE not yet available — polling every 5 s (no timeout)"
     fi
-    sleep 5; i=$((i+1))
+    sleep 5
+    i=$((i+1))  # ← Move here
 done
 _log "CE storage decrypted — proceeding"
 
