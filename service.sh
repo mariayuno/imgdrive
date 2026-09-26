@@ -26,6 +26,28 @@ while [ ! -f /data/adb/imgdrive/.post_fs_done ] && [ "$i" -lt 30 ]; do
 done
 
 # ---------------------------------------------------------------------------
+# Wait for internal storage (CE) decryption to complete.
+# On FBE devices /data/adb is DE-accessible immediately; the keyfile living
+# there does NOT prove the user has unlocked the device.  We must wait for
+# sys.user.0.ce_available=1 (set by vold after the first credential unlock)
+# before touching /sdcard or attempting any mounts.
+# ---------------------------------------------------------------------------
+_log "Waiting for CE storage decryption (sys.user.0.ce_available)..."
+i=0
+while true; do
+    ce="$(getprop sys.user.0.ce_available 2>/dev/null)"
+    [ "$ce" = "1" ] && break
+    # Fallback: older Android versions use vold.decrypt
+    vd="$(getprop vold.decrypt 2>/dev/null)"
+    [ "$vd" = "trigger_restart_framework" ] && break
+    if [ "$i" -eq 0 ]; then
+        _log "CE not yet available — polling every 5 s (no timeout)"
+    fi
+    sleep 5; i=$((i+1))
+done
+_log "CE storage decrypted — proceeding"
+
+# ---------------------------------------------------------------------------
 # Wait for /sdcard to become available (emulated storage may mount late).
 # Poll up to 60 seconds.
 # ---------------------------------------------------------------------------
@@ -57,6 +79,7 @@ fi
 # ---------------------------------------------------------------------------
 # Background watcher: repopulate config whenever it goes missing.
 # Runs for the lifetime of the boot session (until reboot).
+# Only starts after CE decryption has been confirmed above.
 # ---------------------------------------------------------------------------
 (
     while true; do
@@ -108,8 +131,8 @@ case "$KEYFILE" in
 esac
 
 # ---------------------------------------------------------------------------
-# Phase 1: Wait for keyfile (signals storage decrypted post-boot).
-# No hard timeout — must appear before we proceed.
+# Phase 1: Wait for keyfile to become readable.
+# CE decryption is already confirmed above, but the keyfile itself must exist.
 # ---------------------------------------------------------------------------
 _log "Waiting for keyfile: $KEYFILE"
 while [ ! -r "$KEYFILE" ]; do

@@ -6,9 +6,11 @@
 _write_conf() {
     dest="$1"
     mkdir -p "$(dirname "$dest")"
-    cat > "$dest" << 'EOF'
+    # Derive the config directory so the keyfile defaults to the same location.
+    conf_dir="$(dirname "$dest")"
+    cat > "$dest" << CONF
 # imgdrive configuration
-# Edit this file to match your setup.
+# Edit this file to match your setup, then run: imgdrive-ctl mount
 # All paths are required unless marked optional.
 
 # ---------------------------------------------------------------------------
@@ -18,19 +20,22 @@ _write_conf() {
 # Full path to the image on the SD card (real block device mount, not emulated).
 # This is the backing file for Stage 1 (LUKS + F2FS local mount).
 # Must NOT be under /storage/emulated/0 — use the raw SD path.
-IMAGE_REAL="/mnt/media_rw/<sdcard_partition>/drive.img"
+# To find your SD card partition ID run: ls /mnt/media_rw/
+IMAGE_REAL="/mnt/media_rw/<sdcard_id>/drive.img"
 
 # Path to the same image as seen through Android's emulated storage.
 # Used by isodrive for Stage 2 (USB export).
+# Replace <sdcard_id> with the same value as above.
 IMAGE_USB="/storage/emulated/0/ext/sdcard/drive.img"
 
 # ---------------------------------------------------------------------------
 # LUKS keyfile
 # ---------------------------------------------------------------------------
 
-# Absolute path to the LUKS keyfile. Must be readable by root at boot.
-# Keep this on internal storage, not the SD card.
-KEYFILE="/data/adb/imgdrive.key"
+# Absolute path to the LUKS keyfile.
+# Defaults to the same directory as this config file for convenience.
+# Must be readable by root after the device is unlocked.
+KEYFILE="${conf_dir}/imgdrive.key"
 
 # ---------------------------------------------------------------------------
 # Mapper / filesystem
@@ -65,7 +70,7 @@ BIND_PERMS=0770
 # ---------------------------------------------------------------------------
 
 # Set to 1 to automatically bring up Stage 1 after boot
-# (once the keyfile is visible and the image is present).
+# (once CE storage is decrypted, the keyfile is visible, and the image exists).
 # Set to 0 to disable — use imgdrive-ctl manually instead.
 AUTO_MOUNT=1
 
@@ -78,7 +83,7 @@ LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
 BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"
 NSENTER_BIN="/data/data/com.termux/files/usr/bin/nsenter"
 ISODRIVE_BIN="/system/bin/isodrive"
-EOF
+CONF
 }
 
 # If called directly (not sourced), write to the path given as $1.
