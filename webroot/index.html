@@ -704,16 +704,22 @@ function applyState(s) {
 // ── Refresh / status poll ────────────────────────────────────────────
 async function refresh() {
   const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-status');
-  if (r.errno !== 0 || !r.stdout) {
-    toast('⚠️ Status error: ' + (r.stderr || 'no output'));
-    return;
+  // Try to parse stdout regardless of errno — KernelSU can return non-zero
+  // errno even when the script itself exits 0 (subcommand exit codes bubble up
+  // in some exec implementations). Valid JSON always wins.
+  if (r.stdout) {
+    try {
+      const s = JSON.parse(r.stdout);
+      applyState(s);
+      return;
+    } catch(e) {
+      toast('⚠️ Parse error: ' + e.message + ' — ' + r.stdout.slice(0, 60), 5000);
+      return;
+    }
   }
-  try {
-    const s = JSON.parse(r.stdout);
-    applyState(s);
-  } catch(e) {
-    toast('⚠️ Parse error: ' + e.message);
-  }
+  // No stdout at all — surface whatever diagnostic we have.
+  const detail = r.stderr ? r.stderr.slice(0, 80) : ('errno=' + r.errno + ' (no output)');
+  toast('⚠️ Status error: ' + detail, 5000);
 }
 
 // ── Run command ──────────────────────────────────────────────────────

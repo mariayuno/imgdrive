@@ -30,15 +30,14 @@ done
 # Poll up to 60 seconds.
 # ---------------------------------------------------------------------------
 i=0
-while [ ! -d /sdcard/Documents ] && [ "$i" -lt 60 ]; do
+while ! mountpoint -q /sdcard && [ "$i" -lt 60 ]; do
     sleep 1; i=$((i+1))
 done
 
 # ---------------------------------------------------------------------------
 # Repopulate config if missing.
 # ---------------------------------------------------------------------------
-if [ ! -f "$CONF_FILE" ]; then
-    _log "Config not found — writing default: $CONF_FILE"
+_repopulate_conf() {
     if [ -x "$WRITE_CONF" ]; then
         "$WRITE_CONF" "$CONF_FILE" && \
             _log "Default config written — edit $CONF_FILE and run imgdrive-ctl mount" || \
@@ -46,9 +45,29 @@ if [ ! -f "$CONF_FILE" ]; then
     else
         _log "write-default-conf not found at $WRITE_CONF"
     fi
+}
+
+if [ ! -f "$CONF_FILE" ]; then
+    _log "Config not found — writing default: $CONF_FILE"
+    _repopulate_conf
     # A freshly written default config has placeholder values;
     # auto-mount will correctly bail out at the validation step.
 fi
+
+# ---------------------------------------------------------------------------
+# Background watcher: repopulate config whenever it goes missing.
+# Runs for the lifetime of the boot session (until reboot).
+# ---------------------------------------------------------------------------
+(
+    while true; do
+        sleep 30
+        if ! mountpoint -q /sdcard; then continue; fi
+        if [ ! -f "$CONF_FILE" ]; then
+            _log "Config missing — repopulating: $CONF_FILE"
+            _repopulate_conf
+        fi
+    done
+) &
 
 # ---------------------------------------------------------------------------
 # Load config.
