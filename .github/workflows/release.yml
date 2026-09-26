@@ -71,12 +71,28 @@ jobs:
           echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
+      - name: Update update.json
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          VERSION_CODE="${{ steps.bump.outputs.version_code }}"
+          ARTIFACT="${{ steps.meta.outputs.artifact }}"
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ARTIFACT}"
+
+          cat > update.json <<EOF
+          {
+              "version": "${VERSION}",
+              "versionCode": ${VERSION_CODE},
+              "zipUrl": "${ZIP_URL}",
+              "changelog": "https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md"
+          }
+          EOF
+
       - name: Commit version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add module.prop
+          git add module.prop update.json
           git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
           git push origin HEAD:main
 
@@ -113,6 +129,16 @@ jobs:
           } > release_notes.md
 
           echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
+
+          # Prepend to CHANGELOG.md so the URL in update.json stays current
+          VERSION="${{ steps.bump.outputs.version }}"
+          NEW_ENTRY="## ${VERSION}"$'\n\n'"${LOG}"$'\n'
+          if [ -f CHANGELOG.md ]; then
+            echo -e "${NEW_ENTRY}\n$(cat CHANGELOG.md)" > CHANGELOG.md
+          else
+            echo "$NEW_ENTRY" > CHANGELOG.md
+          fi
+          git add CHANGELOG.md
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
