@@ -64,10 +64,19 @@ PUBLIC_OK=0
 ISO_OK=0
 
 # ---------------------------------------------------------------------------
-# Load config
+# Load config (repopulate if missing)
 # ---------------------------------------------------------------------------
+WRITE_CONF="/data/adb/imgdrive/bin/write-default-conf"
+
 if [ ! -f "$CONF_FILE" ]; then
-    printf '%s\n' "[imgdrive] ERROR: Config not found: $CONF_FILE"
+    printf '%s\n' "[imgdrive] Config not found — attempting to write default: $CONF_FILE"
+    if [ -x "$WRITE_CONF" ]; then
+        "$WRITE_CONF" "$CONF_FILE" && \
+            printf '%s\n' "[imgdrive] Default config written — edit $CONF_FILE then re-run imgdrive-ctl" || \
+            printf '%s\n' "[imgdrive] ERROR: Failed to write default config"
+    else
+        printf '%s\n' "[imgdrive] ERROR: write-default-conf not found at $WRITE_CONF"
+    fi
     exit 1
 fi
 # shellcheck disable=SC1090
