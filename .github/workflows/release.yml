@@ -3,11 +3,6 @@ name: Release
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '.github/**'
-      - '*.md'
-      - 'LICENSE'
-      - '.gitignore'
 
 permissions:
   contents: write
