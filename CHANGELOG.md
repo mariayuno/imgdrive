@@ -1,3 +1,8 @@
+## v2.0
+
+- Refactor GitHub Actions workflow for release process (0d573ff)
+- Simplify version bumping in GitHub Actions workflow (2fdb4f2)
+
 # Changelog
 
 ## v1.4
