@@ -5,3 +5,4 @@ versionCode=4
 author=Rex Ackermann
 description=Two-stage encrypted image drive: LUKS2+F2FS local mount or raw USB export via isodrive
 minMagisk=20400
+updateJson=https://raw.githubusercontent.com/rexackermann/imgdrive/main/update.json
