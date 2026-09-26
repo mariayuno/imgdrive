@@ -355,6 +355,48 @@
     font-size: 11px; color: var(--muted);
     text-align: right; padding: 2px 0;
   }
+
+  /* ── Setup storage ── */
+  .setup-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
+  }
+  .setup-row input[type=number] {
+    flex: 1; min-width: 0;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+    color: var(--text); font-size: 14px; outline: none;
+  }
+  .setup-row input[type=number]:focus { border-color: var(--accent); }
+  .setup-row select {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 10px;
+    color: var(--text); font-size: 14px; outline: none; cursor: pointer;
+  }
+  .setup-btn {
+    background: linear-gradient(135deg,#d97706,#b45309); border: none;
+    border-radius: 10px; padding: 11px 24px;
+    color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; width: 100%; transition: opacity .15s;
+    margin-bottom: 6px;
+  }
+  .setup-btn:active { opacity: .8; }
+  .conf-btn {
+    margin-bottom: 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 24px;
+    color: var(--text); font-size: 13px; font-weight: 600;
+    cursor: pointer; width: 100%; transition: opacity .15s;
+  }
+  .conf-btn:active { opacity: .8; }
+  .setup-log {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+    line-height: 1.7; color: var(--text); white-space: pre-wrap;
+    word-break: break-all; max-height: 180px; overflow-y: auto;
+    display: none; margin-top: 8px;
+  }
+  .setup-log.show { display: block; }
 </style>
 </head>
 <body>
@@ -467,11 +509,27 @@
     <div class="log-body" id="logBody">Loading…</div>
   </div>
 
+  <!-- Setup Storage -->
+  <div class="section-head">Setup Storage</div>
+  <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
+    Allocates image, generates keyfile, formats LUKS2 + F2FS. Requires config paths to be set first.
+  </div>
+  <div class="setup-row">
+    <input type="number" id="setupSize" min="1" value="10" placeholder="Size">
+    <select id="setupUnit">
+      <option value="G">GB</option>
+      <option value="M">MB</option>
+    </select>
+  </div>
+  <button class="setup-btn" onclick="setupStorage()">🛠 Create Encrypted Drive</button>
+  <div class="setup-log" id="setupLog"></div>
+
   <!-- Config editor -->
   <div class="section-head">Config</div>
   <div style="margin-bottom:6px;font-size:12px;color:var(--muted)">
     /sdcard/Documents/imgdrive/imgdrive.conf
   </div>
+  <button class="conf-btn" onclick="writeDefaultConf()">📄 Write Default Config</button>
   <textarea class="conf-textarea" id="confText" spellcheck="false" placeholder="Loading config…"></textarea>
   <button class="save-btn" onclick="saveConf()">💾 Save Config</button>
 
@@ -767,6 +825,108 @@ async function saveConf() {
   } else {
     toast('✅ Config saved');
   }
+}
+
+async function writeDefaultConf() {
+  showSpinner('Writing default config…');
+  const r = await shellExec('/data/adb/imgdrive/bin/write-default-conf /sdcard/Documents/imgdrive/imgdrive.conf');
+  hideSpinner();
+  if (r.errno !== 0) {
+    toast('❌ Failed: ' + (r.stderr || r.stdout || ''), 4000);
+  } else {
+    toast('✅ Default config written');
+    await loadConf();
+  }
+}
+
+async function setupStorage() {
+  const size = parseInt(document.getElementById('setupSize').value, 10);
+  const unit = document.getElementById('setupUnit').value;
+  if (!size || size < 1) { toast('⚠️ Enter a valid size'); return; }
+
+  const logEl = document.getElementById('setupLog');
+  logEl.textContent = '';
+  logEl.classList.add('show');
+
+  function slog(msg) {
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // Read config to get IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME
+  slog('▶ Reading config…');
+  const cr = await shellExec(
+    '. /sdcard/Documents/imgdrive/imgdrive.conf 2>/dev/null && ' +
+    'printf "%s\\n%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}" "${NAME:-drive}"'
+  );
+  if (!cr.stdout || cr.stdout.includes('<')) {
+    slog('✖ Config not found or still has placeholders. Write and edit config first.'); return;
+  }
+  const [IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME] = cr.stdout.trim().split('\n');
+  if (!IMAGE_REAL || !KEYFILE) { slog('✖ IMAGE_REAL or KEYFILE missing in config.'); return; }
+  slog('  Image  : ' + IMAGE_REAL);
+  slog('  Keyfile: ' + KEYFILE);
+
+  // Step 1: keyfile
+  slog('▶ Checking keyfile…');
+  const kfCheck = await shellExec('[ -f ' + JSON.stringify(KEYFILE) + ' ] && echo exists || echo missing');
+  if (kfCheck.stdout.trim() === 'missing') {
+    slog('  Generating 64-byte random keyfile…');
+    const kg = await shellExec(
+      'mkdir -p ' + JSON.stringify(KEYFILE.replace(/\/[^/]+$/, '')) +
+      ' && dd if=/dev/urandom of=' + JSON.stringify(KEYFILE) + ' bs=64 count=1 2>&1' +
+      ' && chmod 600 ' + JSON.stringify(KEYFILE)
+    );
+    if (kg.errno !== 0) { slog('✖ Keyfile generation failed:\n' + (kg.stderr || kg.stdout)); return; }
+    slog('  Keyfile created.');
+  } else {
+    slog('  Keyfile already exists — reusing.');
+  }
+
+  // Step 2: allocate image
+  slog('▶ Allocating ' + size + unit + 'B image…');
+  const imgDir = IMAGE_REAL.replace(/\/[^/]+$/, '');
+  const alloc = await shellExec(
+    'mkdir -p ' + JSON.stringify(imgDir) +
+    ' && fallocate -l ' + size + unit + ' ' + JSON.stringify(IMAGE_REAL) + ' 2>&1' +
+    ' || truncate -s ' + size + unit + ' ' + JSON.stringify(IMAGE_REAL)
+  );
+  if (alloc.errno !== 0) { slog('✖ Allocation failed:\n' + (alloc.stderr || alloc.stdout)); return; }
+  slog('  Image allocated.');
+
+  // Step 3: LUKS2 format
+  slog('▶ Formatting LUKS2…');
+  const luks = await shellExec(
+    JSON.stringify(CRYPTSETUP_BIN) +
+    ' luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512' +
+    ' --hash sha512 --pbkdf argon2id --sector-size 4096 --batch-mode' +
+    ' --key-file ' + JSON.stringify(KEYFILE) + ' ' + JSON.stringify(IMAGE_REAL) + ' 2>&1'
+  );
+  if (luks.errno !== 0) { slog('✖ luksFormat failed:\n' + (luks.stderr || luks.stdout)); return; }
+  slog('  LUKS2 header written.');
+
+  // Step 4: open mapper
+  const SETUP_NAME = NAME + '_setup';
+  slog('▶ Opening LUKS mapper (' + SETUP_NAME + ')…');
+  const open = await shellExec(
+    JSON.stringify(CRYPTSETUP_BIN) +
+    ' luksOpen ' + JSON.stringify(IMAGE_REAL) +
+    ' ' + SETUP_NAME + ' --key-file ' + JSON.stringify(KEYFILE) + ' 2>&1'
+  );
+  if (open.errno !== 0) { slog('✖ luksOpen failed:\n' + (open.stderr || open.stdout)); return; }
+  slog('  Mapper /dev/mapper/' + SETUP_NAME + ' active.');
+
+  // Step 5: F2FS format
+  slog('▶ Formatting F2FS…');
+  const f2fs = await shellExec('mkfs.f2fs -f /dev/mapper/' + SETUP_NAME + ' 2>&1');
+  if (f2fs.errno !== 0) { slog('✖ mkfs.f2fs failed:\n' + (f2fs.stderr || f2fs.stdout) + '\nIs f2fs-tools installed? (pkg install f2fs-tools)'); return; }
+  slog('  F2FS formatted.');
+
+  // Step 6: close
+  slog('▶ Closing mapper…');
+  await shellExec(JSON.stringify(CRYPTSETUP_BIN) + ' luksClose ' + SETUP_NAME + ' 2>&1');
+  slog('');
+  slog('✅ Drive ready. Run imgdrive-ctl mount or tap Mount above.');
 }
 
 async function clearLog() {
