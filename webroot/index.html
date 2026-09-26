@@ -522,6 +522,11 @@ let _apiLabel = 'none';
 function _wrapExec(fn, label) {
   _exec = async (cmd) => {
     const r = await fn(cmd);
+    // KernelSU Next (and some forks) return a plain string (stdout only)
+    // rather than {stdout, stderr, errno}. Handle both.
+    if (typeof r === 'string') {
+      return { stdout: r, stderr: '', errno: 0 };
+    }
     return { stdout: r.stdout || '', stderr: r.stderr || '', errno: r.errno ?? 0 };
   };
   _apiLabel = label;
