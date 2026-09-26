@@ -1,7 +1,7 @@
 id=imgdrive
 name=imgdrive
-version=v1.5
-versionCode=5
+version=v1.6
+versionCode=6
 author=Rex Ackermann
 description=Two-stage encrypted image drive: LUKS2+F2FS local mount or raw USB export via isodrive
 minMagisk=20400
