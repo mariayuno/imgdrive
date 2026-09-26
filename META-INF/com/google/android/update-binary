@@ -18,6 +18,7 @@ set_perm_recursive "$MODPATH" root root 0755 0644
 set_perm "$MODPATH/system/bin/isodrive"        root root 0755
 set_perm "$MODPATH/system/bin/imgdrive-ctl"    root root 0755
 set_perm "$MODPATH/common/imgdrive-ctl"        root root 0755
+set_perm "$MODPATH/common/imgdrive-status"     root root 0755
 set_perm "$MODPATH/common/write-default-conf"  root root 0755
 
 # Install binaries to stable data path
@@ -25,23 +26,18 @@ INSTALL_DIR="/data/adb/imgdrive/bin"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "/data/adb/imgdrive/log"
 
-cp -f "$MODPATH/common/imgdrive-ctl"       "$INSTALL_DIR/imgdrive-ctl"
-cp -f "$MODPATH/common/imgdrive-status" "$INSTALL_DIR/imgdrive-status"
-cp -f "$MODPATH/common/write-default-conf" "$INSTALL_DIR/write-default-conf"
+cp -f "$MODPATH/common/imgdrive-ctl"        "$INSTALL_DIR/imgdrive-ctl"
+cp -f "$MODPATH/common/imgdrive-status"     "$INSTALL_DIR/imgdrive-status"
+cp -f "$MODPATH/common/write-default-conf"  "$INSTALL_DIR/write-default-conf"
 chmod 0755 "$INSTALL_DIR/imgdrive-ctl"
+chmod 0755 "$INSTALL_DIR/imgdrive-status"
 chmod 0755 "$INSTALL_DIR/write-default-conf"
 
-# Write default config if not already present
-CONF_DIR="/sdcard/Documents/imgdrive"
-CONF_FILE="$CONF_DIR/imgdrive.conf"
-
-if [ ! -f "$CONF_FILE" ]; then
-    "$INSTALL_DIR/write-default-conf" "$CONF_FILE"
-    ui_print "- Default config written to $CONF_FILE"
-    ui_print "- Edit it before rebooting!"
-else
-    ui_print "- Existing config kept: $CONF_FILE"
-fi
+# Config is written on first boot by service.sh (after CE decryption), not
+# here — /sdcard is not reliably mounted during module installation.
+ui_print "- Config will be written to /sdcard/Documents/imgdrive/imgdrive.conf"
+ui_print "- on first boot after decryption. Edit it before enabling auto-mount."
 
 ui_print "- Root solution: $ROOT_SOL"
 ui_print "- imgdrive-ctl: $INSTALL_DIR"
+#MAGISK
