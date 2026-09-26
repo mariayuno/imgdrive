@@ -73,8 +73,10 @@ _f2fs_mounted() {
     [ -x "$nsenter_bin" ] || nsenter_bin="nsenter"
     "$nsenter_bin" -t 1 -m -- cat /proc/self/mountinfo 2>/dev/null |
         awk -v tgt="$REAL_MOUNT" -v src="/dev/mapper/$NAME" '
+            BEGIN { rc=1 }
             $5 != tgt { next }
-            { for(i=7;i<=NF;i++) if($i=="-"){ if($(i+1)=="f2fs" && $(i+2)==src) exit 0; else exit 1 } }
+            { for(i=7;i<=NF;i++) if($i=="-"){ if($(i+1)=="f2fs" && $(i+2)==src) rc=0; exit } }
+            END { exit rc }
         '
     return $?
 }
