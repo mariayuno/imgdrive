@@ -1,0 +1,3 @@
+PLACEHOLDER: Replace with arm64 isodrive binary from
+https://github.com/nitanmarcel/isodrive-magisk/releases
+Rename to "isodrive" (no extension, chmod 0755).

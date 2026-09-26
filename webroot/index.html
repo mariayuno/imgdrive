@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>imgdrive</title>
+<style>
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #161b24;
+    --surface2: #1e2533;
+    --border:   #2a3347;
+    --accent:   #4f8ef7;
+    --accent2:  #7c3aed;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --amber:    #f59e0b;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --radius:   14px;
+    --font: 'Inter', system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --surface2:#f8fafc;
+      --border:  #e2e8f0;
+      --text:    #0f172a;
+      --muted:   #94a3b8;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:      #f1f5f9;
+    --surface: #ffffff;
+    --surface2:#f8fafc;
+    --border:  #e2e8f0;
+    --text:    #0f172a;
+    --muted:   #94a3b8;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  body {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 100;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+  header .sub { font-size: 12px; color: var(--muted); }
+  .hdr-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .theme-btn {
+    background: none; border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px;
+    color: var(--text); cursor: pointer; font-size: 16px;
+  }
+  .refresh-btn {
+    background: var(--accent); border: none;
+    border-radius: 8px; padding: 6px 14px;
+    color: #fff; cursor: pointer; font-size: 13px; font-weight: 600;
+    transition: opacity .15s;
+  }
+  .refresh-btn:active { opacity: .75; }
+
+  /* ── Layout ── */
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  /* ── State card ── */
+  .state-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .state-orb {
+    width: 56px; height: 56px; border-radius: 50%;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    transition: background .3s;
+  }
+  .orb-stage1  { background: rgba(34,197,94,.15);  box-shadow: 0 0 16px rgba(34,197,94,.25); }
+  .orb-stage2  { background: rgba(79,142,247,.15); box-shadow: 0 0 16px rgba(79,142,247,.25); }
+  .orb-off     { background: rgba(100,116,139,.12); }
+  .orb-broken  { background: rgba(239,68,68,.15);   box-shadow: 0 0 16px rgba(239,68,68,.25); }
+  .orb-loading { background: rgba(245,158,11,.1); animation: pulse 1.4s infinite; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  .state-info { flex: 1; min-width: 0; }
+  .state-label { font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+  .state-desc  { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .usb-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 3px 10px;
+    font-size: 12px; margin-top: 8px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot-green  { background: var(--green); }
+  .dot-red    { background: var(--red); }
+  .dot-amber  { background: var(--amber); }
+  .dot-blue   { background: var(--accent); }
+  .dot-muted  { background: var(--muted); }
+
+  /* ── Section heading ── */
+  .section-head {
+    font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 20px 0 8px;
+  }
+
+  /* ── Action buttons ── */
+  .btn-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .btn {
+    border: none; border-radius: var(--radius);
+    padding: 14px 10px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 6px;
+    transition: opacity .15s, transform .1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active { opacity: .8; transform: scale(.97); }
+  .btn-icon { font-size: 22px; }
+  .btn-primary  { background: linear-gradient(135deg,var(--accent),#3b6fd4); color:#fff; }
+  .btn-usb      { background: linear-gradient(135deg,var(--accent2),#5b21b6); color:#fff; }
+  .btn-toggle   { background: linear-gradient(135deg,#0891b2,#0e7490); color:#fff; }
+  .btn-off      { background: linear-gradient(135deg,var(--red),#b91c1c); color:#fff; }
+  .btn-sync     { background: linear-gradient(135deg,#059669,#047857); color:#fff; }
+  .btn-disabled { opacity: .4; pointer-events: none; }
+
+  /* ── Indicators ── */
+  .indicators {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .ind {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 10px;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 5px;
+    font-size: 11px; color: var(--muted); text-align: center;
+  }
+  .ind-icon { font-size: 18px; }
+  .ind-ok   { color: var(--green); }
+  .ind-err  { color: var(--red); }
+  .ind-warn { color: var(--amber); }
+  .ind-label { font-weight: 600; font-size: 12px; }
+
+  /* ── Info rows ── */
+  .info-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .info-row {
+    display: flex; align-items: center;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 10px;
+    min-width: 0;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-key  { font-size: 12px; color: var(--muted); flex-shrink: 0; width: 110px; }
+  .info-val  { font-size: 13px; font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+
+  /* ── Log ── */
+  .log-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .log-head {
+    padding: 10px 16px;
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .log-body {
+    padding: 12px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--text);
+    max-height: 240px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-clear-btn {
+    background: none; border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 8px;
+    font-size: 11px; color: var(--muted); cursor: pointer;
+  }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+    left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 13px; font-weight: 500;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .2s, transform .2s;
+    z-index: 999;
+    white-space: nowrap;
+    box-shadow: 0 4px 24px rgba(0,0,0,.3);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Spinner overlay ── */
+  #spinner {
+    display: none;
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,.45);
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+    color: #fff; font-size: 14px;
+  }
+  #spinner.show { display: flex; }
+  .spin-ring {
+    width: 44px; height: 44px;
+    border: 3px solid rgba(255,255,255,.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Config editor ── */
+  .conf-textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    resize: vertical;
+    min-height: 200px;
+    outline: none;
+  }
+  .conf-textarea:focus { border-color: var(--accent); }
+  .save-btn {
+    margin-top: 10px;
+    background: var(--accent); border: none;
+    border-radius: 10px; padding: 11px 24px;
+    color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; width: 100%;
+    transition: opacity .15s;
+  }
+  .save-btn:active { opacity: .8; }
+
+  /* ── Manual-run modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(0,0,0,.6);
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    width: 100%; max-width: 520px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .modal-box h2 { font-size: 16px; font-weight: 700; }
+  .modal-box p  { font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .modal-label  { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .modal-cmd {
+    width: 100%;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; resize: none; min-height: 64px;
+    outline: none; user-select: all;
+  }
+  .modal-out {
+    width: 100%;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; resize: vertical; min-height: 80px;
+    outline: none;
+  }
+  .modal-out:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-actions button {
+    flex: 1; padding: 10px; border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: opacity .15s;
+  }
+  .modal-actions button:active { opacity: .75; }
+  .btn-copy   { background: var(--surface2); color: var(--text); border: 1px solid var(--border) !important; }
+  .btn-submit { background: var(--accent);   color: #fff; }
+  .btn-cancel { background: var(--surface2); color: var(--muted); border: 1px solid var(--border) !important; }
+  .api-badge {
+    font-size: 11px; color: var(--muted);
+    text-align: right; padding: 2px 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">💾</div>
+  <div>
+    <h1>imgdrive</h1>
+    <div class="sub">encrypted image drive manager</div>
+  </div>
+  <div class="hdr-right">
+    <span id="apiBadge" class="api-badge" title="Root exec API">API: loading…</span>
+    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme">🌓</button>
+    <button class="refresh-btn" onclick="refresh()">Refresh</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- State card -->
+  <div class="state-card" id="stateCard">
+    <div class="state-orb orb-loading" id="stateOrb">⏳</div>
+    <div class="state-info">
+      <div class="state-label" id="stateLabel">Loading…</div>
+      <div class="state-desc"  id="stateDesc">Querying system state</div>
+      <div class="usb-pill">
+        <div class="dot dot-muted" id="usbDot"></div>
+        <span id="usbLabel">USB: checking</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Component indicators -->
+  <div class="section-head">Components</div>
+  <div class="indicators">
+    <div class="ind" id="ind-keyfile">
+      <div class="ind-icon">🔑</div>
+      <div class="ind-label">Keyfile</div>
+      <div>—</div>
+    </div>
+    <div class="ind" id="ind-image">
+      <div class="ind-icon">🗂</div>
+      <div class="ind-label">Image</div>
+      <div>—</div>
+    </div>
+    <div class="ind" id="ind-mapper">
+      <div class="ind-icon">🔒</div>
+      <div class="ind-label">LUKS</div>
+      <div>—</div>
+    </div>
+    <div class="ind" id="ind-f2fs">
+      <div class="ind-icon">📁</div>
+      <div class="ind-label">F2FS</div>
+      <div>—</div>
+    </div>
+    <div class="ind" id="ind-bindfs">
+      <div class="ind-icon">🔗</div>
+      <div class="ind-label">bindfs</div>
+      <div>—</div>
+    </div>
+    <div class="ind" id="ind-iso">
+      <div class="ind-icon">🖥</div>
+      <div class="ind-label">isodrive</div>
+      <div>—</div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="section-head">Actions</div>
+  <div class="btn-grid">
+    <button class="btn btn-primary" onclick="run('mount','Mounting Stage 1…')">
+      <span class="btn-icon">🔓</span>Mount (Stage 1)
+    </button>
+    <button class="btn btn-usb" onclick="run('usb','Switching to USB…')">
+      <span class="btn-icon">🔌</span>USB Export (Stage 2)
+    </button>
+    <button class="btn btn-toggle" onclick="run('toggle','Toggling…')">
+      <span class="btn-icon">🔄</span>Toggle
+    </button>
+    <button class="btn btn-sync" onclick="run('sync','Syncing…')">
+      <span class="btn-icon">⚡</span>Sync
+    </button>
+  </div>
+  <div class="btn-grid" style="grid-template-columns:1fr">
+    <button class="btn btn-off" onclick="run('off','Shutting down…')">
+      <span class="btn-icon">⏹</span>Stop Everything
+    </button>
+  </div>
+
+  <!-- Info -->
+  <div class="section-head">Details</div>
+  <div class="info-card" id="infoCard">
+    <div class="info-row"><span class="info-key">Name</span><span class="info-val" id="i-name">—</span></div>
+    <div class="info-row"><span class="info-key">Image size</span><span class="info-val" id="i-size">—</span></div>
+    <div class="info-row"><span class="info-key">Loop device</span><span class="info-val" id="i-loop">—</span></div>
+    <div class="info-row"><span class="info-key">Mapper</span><span class="info-val" id="i-mapper">—</span></div>
+    <div class="info-row"><span class="info-key">Real mount</span><span class="info-val" id="i-real">—</span></div>
+    <div class="info-row"><span class="info-key">User view</span><span class="info-val" id="i-user">—</span></div>
+    <div class="info-row"><span class="info-key">Public view</span><span class="info-val" id="i-pub">—</span></div>
+    <div class="info-row"><span class="info-key">ISO image</span><span class="info-val" id="i-iso">—</span></div>
+  </div>
+
+  <!-- Log -->
+  <div class="section-head">Boot log</div>
+  <div class="log-wrap">
+    <div class="log-head">
+      <span>/data/adb/imgdrive/log/service.log</span>
+      <button class="log-clear-btn" onclick="clearLog()">Clear</button>
+    </div>
+    <div class="log-body" id="logBody">Loading…</div>
+  </div>
+
+  <!-- Config editor -->
+  <div class="section-head">Config</div>
+  <div style="margin-bottom:6px;font-size:12px;color:var(--muted)">
+    /sdcard/Documents/imgdrive/imgdrive.conf
+  </div>
+  <textarea class="conf-textarea" id="confText" spellcheck="false" placeholder="Loading config…"></textarea>
+  <button class="save-btn" onclick="saveConf()">💾 Save Config</button>
+
+</main>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Spinner -->
+<div id="spinner">
+  <div class="spin-ring"></div>
+  <div id="spinnerMsg">Working…</div>
+</div>
+
+<!-- Manual-run modal: shown when no root API is available -->
+<div id="manualModal" class="modal-overlay">
+  <div class="modal-box">
+    <h2>🔧 Run manually</h2>
+    <p>No root API is available in this viewer. Copy the command below, run it in a root shell (ADB or Termux), then paste the output and tap <strong>Submit</strong>.</p>
+    <div>
+      <div class="modal-label">Command</div>
+      <textarea id="manualCmd" class="modal-cmd" readonly></textarea>
+    </div>
+    <div>
+      <div class="modal-label">Output (paste here — leave blank for write commands)</div>
+      <textarea id="manualOut" class="modal-out" placeholder="Paste stdout here, or leave blank if the command produces no output…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-copy"   onclick="manualCopy()">📋 Copy</button>
+      <button class="btn-submit" onclick="manualSubmit()">✓ Submit</button>
+      <button class="btn-cancel" onclick="manualCancel()">✕ Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Root exec shim ───────────────────────────────────────────────────
+// Priority order:
+//   1. window.ksu          — KernelSU native WebUI injection (no CDN needed)
+//   2. window.apd          — APatch native WebUI injection
+//   3. window.kernelsu     — already-loaded CDN bundle (cached load)
+//   4. CDN load attempt    — one-shot, short timeout, no blocking
+//   5. Manual fallback     — shows command in a modal the user can copy/run
+
+let _exec = null;
+let _apiLabel = 'none';
+
+function _wrapExec(fn, label) {
+  _exec = async (cmd) => {
+    const r = await fn(cmd);
+    return { stdout: r.stdout || '', stderr: r.stderr || '', errno: r.errno ?? 0 };
+  };
+  _apiLabel = label;
+}
+
+async function loadRootApi() {
+  // 1. KernelSU native injection (synchronous, always try first)
+  if (window.ksu && typeof window.ksu.exec === 'function') {
+    _wrapExec((cmd) => window.ksu.exec(cmd), 'KernelSU (native)');
+    return;
+  }
+
+  // 2. APatch native injection
+  if (window.apd && typeof window.apd.exec === 'function') {
+    _wrapExec((cmd) => window.apd.exec(cmd), 'APatch (native)');
+    return;
+  }
+
+  // 3. kernelsu already on window from a previous CDN load
+  if (window.kernelsu && typeof window.kernelsu.exec === 'function') {
+    _wrapExec((cmd) => window.kernelsu.exec(cmd), 'kernelsu (cached)');
+    return;
+  }
+
+  // 4. Try CDN — short timeout so we don't block startup
+  await new Promise((resolve) => {
+    const s = document.createElement('script');
+    const timer = setTimeout(() => { s.onerror && s.onerror(); }, 3000);
+    s.src = 'https://cdn.jsdelivr.net/npm/kernelsu@latest/lib/index.umd.js';
+    s.onload = () => {
+      clearTimeout(timer);
+      if (window.kernelsu && typeof window.kernelsu.exec === 'function') {
+        _wrapExec((cmd) => window.kernelsu.exec(cmd), 'kernelsu (CDN)');
+      }
+      resolve();
+    };
+    s.onerror = () => { clearTimeout(timer); resolve(); };
+    document.head.appendChild(s);
+  });
+
+  // 5. No API available — _exec stays null; shellExec will use the manual modal
+}
+
+// ── Manual-run modal ─────────────────────────────────────────────────
+// Shown when no root API is available. Lets the user copy and run the
+// command in a root shell (ADB / Termux), then paste the output back.
+
+let _manualResolve = null;
+
+function _showManualModal(cmd) {
+  return new Promise((resolve) => {
+    _manualResolve = resolve;
+    document.getElementById('manualCmd').value = cmd;
+    document.getElementById('manualOut').value = '';
+    document.getElementById('manualModal').classList.add('show');
+  });
+}
+
+function manualCopy() {
+  const el = document.getElementById('manualCmd');
+  el.select();
+  try { document.execCommand('copy'); } catch (_) {}
+  try { navigator.clipboard.writeText(el.value); } catch (_) {}
+  toast('Command copied');
+}
+
+function manualSubmit() {
+  const out = document.getElementById('manualOut').value.trim();
+  document.getElementById('manualModal').classList.remove('show');
+  if (_manualResolve) {
+    _manualResolve({ stdout: out, stderr: '', errno: out ? 0 : 1 });
+    _manualResolve = null;
+  }
+}
+
+function manualCancel() {
+  document.getElementById('manualModal').classList.remove('show');
+  if (_manualResolve) {
+    _manualResolve({ stdout: '', stderr: 'cancelled', errno: 1 });
+    _manualResolve = null;
+  }
+}
+
+async function shellExec(cmd) {
+  if (_exec) return await _exec(cmd);
+  // No API — show manual modal
+  return await _showManualModal(cmd);
+}
+
+// ── Theme ────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('theme', next); } catch(_) {}
+}
+try {
+  const t = localStorage.getItem('theme');
+  if (t) document.documentElement.setAttribute('data-theme', t);
+} catch(_) {}
+
+// ── Toast ────────────────────────────────────────────────────────────
+let _toastTimer;
+function toast(msg, duration = 2800) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// ── Spinner ──────────────────────────────────────────────────────────
+function showSpinner(msg) {
+  document.getElementById('spinnerMsg').textContent = msg;
+  document.getElementById('spinner').classList.add('show');
+}
+function hideSpinner() {
+  document.getElementById('spinner').classList.remove('show');
+}
+
+// ── State rendering ──────────────────────────────────────────────────
+const STATE_META = {
+  STAGE1:  { label: 'Stage 1 — Mounted',      desc: 'LUKS decrypted, F2FS mounted, bindfs active', orb: 'orb-stage1', emoji: '✅' },
+  STAGE2:  { label: 'Stage 2 — USB Export',   desc: 'Raw image exported via isodrive over USB',    orb: 'orb-stage2', emoji: '🔌' },
+  OFF:     { label: 'Offline',                 desc: 'No active mounts or exports',                  orb: 'orb-off',    emoji: '⏹' },
+  BROKEN:  { label: 'Inconsistent',            desc: 'Partial state detected — use Stop Everything', orb: 'orb-broken', emoji: '⚠️' },
+  LOADING: { label: 'Loading…',               desc: 'Querying system state',                        orb: 'orb-loading',emoji: '⏳' },
+};
+
+function setInd(id, ok, label) {
+  const el = document.getElementById('ind-' + id);
+  if (!el) return;
+  const rows = el.querySelectorAll('div');
+  rows[0].className = 'ind-icon';
+  rows[2].textContent = label;
+  rows[2].className = ok === true ? 'ind-ok' : ok === false ? 'ind-err' : 'ind-warn';
+}
+
+function applyState(s) {
+  const meta = STATE_META[s.state] || STATE_META.BROKEN;
+  const orb  = document.getElementById('stateOrb');
+  orb.className = 'state-orb ' + meta.orb;
+  orb.textContent = meta.emoji;
+  document.getElementById('stateLabel').textContent = meta.label;
+  document.getElementById('stateDesc').textContent  = meta.desc;
+
+  const usbDot   = document.getElementById('usbDot');
+  const usbLabel = document.getElementById('usbLabel');
+  if (s.usb) {
+    usbDot.className   = 'dot dot-blue';
+    usbLabel.textContent = 'USB: connected';
+  } else {
+    usbDot.className   = 'dot dot-muted';
+    usbLabel.textContent = 'USB: disconnected';
+  }
+
+  setInd('keyfile', s.keyfile,  s.keyfile  ? 'readable' : 'missing');
+  setInd('image',   s.img_real, s.img_real ? s.image_size || 'present' : 'missing');
+  setInd('mapper',  s.mapper,   s.mapper   ? 'active'  : 'inactive');
+  setInd('f2fs',    s.f2fs,     s.f2fs     ? 'mounted' : 'unmounted');
+  setInd('bindfs',  s.bindfs,   s.bindfs   ? 'active'  : 'inactive');
+  setInd('iso',     s.iso,      s.iso      ? 'exporting' : 'idle');
+
+  document.getElementById('i-name').textContent   = s.name       || '—';
+  document.getElementById('i-size').textContent   = s.image_size || '—';
+  document.getElementById('i-loop').textContent   = s.loop && s.loop !== 'none' ? s.loop : '—';
+  document.getElementById('i-mapper').textContent = '/dev/mapper/' + (s.name || '?');
+  document.getElementById('i-real').textContent   = s.real_mount  || '—';
+  document.getElementById('i-user').textContent   = s.user_view   || '—';
+  document.getElementById('i-pub').textContent    = s.public_view || '—';
+  document.getElementById('i-iso').textContent    = (s.iso_image && s.iso_image !== 'none') ? s.iso_image : '—';
+
+  if (s.log !== undefined) {
+    const lb = document.getElementById('logBody');
+    lb.textContent = s.log || '(empty)';
+    lb.scrollTop = lb.scrollHeight;
+  }
+}
+
+// ── Refresh / status poll ────────────────────────────────────────────
+async function refresh() {
+  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-status');
+  if (r.errno !== 0 || !r.stdout) {
+    toast('⚠️ Status error: ' + (r.stderr || 'no output'));
+    return;
+  }
+  try {
+    const s = JSON.parse(r.stdout);
+    applyState(s);
+  } catch(e) {
+    toast('⚠️ Parse error: ' + e.message);
+  }
+}
+
+// ── Run command ──────────────────────────────────────────────────────
+async function run(cmd, msg) {
+  showSpinner(msg);
+  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-ctl ' + cmd);
+  hideSpinner();
+  if (r.errno !== 0) {
+    toast('❌ Failed: ' + (r.stderr || r.stdout || 'unknown error'), 4000);
+  } else {
+    toast('✅ Done');
+  }
+  await refresh();
+}
+
+// ── Config load/save ─────────────────────────────────────────────────
+async function loadConf() {
+  const r = await shellExec('cat /sdcard/Documents/imgdrive/imgdrive.conf 2>/dev/null || echo "__NOT_FOUND__"');
+  const ta = document.getElementById('confText');
+  if (r.stdout && r.stdout.trim() !== '__NOT_FOUND__') {
+    ta.value = r.stdout;
+  } else {
+    ta.value = '# Config not found.\n# Tap Save to create a default config.';
+  }
+}
+
+async function saveConf() {
+  const text = document.getElementById('confText').value;
+  if (!text.trim()) { toast('⚠️ Empty config — not saved'); return; }
+  // Write via printf to avoid issues with special chars in heredoc
+  const escaped = text
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "'\\''");
+  const cmd = "mkdir -p /sdcard/Documents/imgdrive && printf '%s' '" + escaped + "' > /sdcard/Documents/imgdrive/imgdrive.conf";
+  showSpinner('Saving config…');
+  const r = await shellExec(cmd);
+  hideSpinner();
+  if (r.errno !== 0) {
+    toast('❌ Save failed: ' + (r.stderr || ''), 4000);
+  } else {
+    toast('✅ Config saved');
+  }
+}
+
+async function clearLog() {
+  await shellExec('printf "" > /data/adb/imgdrive/log/service.log');
+  document.getElementById('logBody').textContent = '(cleared)';
+  toast('Log cleared');
+}
+
+// ── Auto-refresh every 5 seconds ─────────────────────────────────────
+let _pollTimer;
+function startPoll() {
+  _pollTimer = setInterval(refresh, 5000);
+}
+function stopPoll() {
+  clearInterval(_pollTimer);
+}
+document.addEventListener('visibilitychange', () => {
+  document.hidden ? stopPoll() : (refresh(), startPoll());
+});
+
+// ── Init ─────────────────────────────────────────────────────────────
+(async () => {
+  await loadRootApi();
+  // Show which exec backend is active
+  const badge = document.getElementById('apiBadge');
+  if (badge) {
+    badge.textContent = _exec ? ('API: ' + _apiLabel) : 'API: manual mode';
+    badge.title = _exec
+      ? 'Root commands execute automatically via ' + _apiLabel
+      : 'No root API detected — commands will show a copy/paste modal';
+  }
+  await Promise.all([refresh(), loadConf()]);
+  startPoll();
+})();
+</script>
+</body>
+</html>

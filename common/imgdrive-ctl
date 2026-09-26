@@ -1,0 +1,873 @@
+#!/system/bin/sh
+# imgdrive-ctl
+# Two-stage image drive manager.
+#
+# Stage 1:  image -> losetup (4096-byte sectors + DIO) -> LUKS2
+#           -> F2FS -> bindfs (uid:gid / perms from config)
+#           -> USER_VIEW -> PUBLIC_VIEW (Android emulated storage)
+#
+# Stage 2:  local stack fully torn down
+#           -> isodrive exports the raw image RW over USB
+#
+# Config:   /sdcard/Documents/imgdrive/imgdrive.conf
+#
+# Usage:    imgdrive-ctl [-v] [mount|usb|toggle|sync|status|off]
+#
+# Notes:
+#   * Do NOT use /storage/emulated/0 as the loop backing file.
+#   * mountinfo has optional fields; never assume '-' is at a fixed field index.
+#   * status is inspection-only and does not perform write tests.
+
+CONF_FILE="/sdcard/Documents/imgdrive/imgdrive.conf"
+
+# ---------------------------------------------------------------------------
+# Defaults (overridden by config)
+# ---------------------------------------------------------------------------
+IMAGE_REAL=""
+IMAGE_USB=""
+KEYFILE=""
+NAME="drive"
+REAL_MOUNT="/mnt/media_rw/drive"
+USER_VIEW="/data/media/0/drive"
+PUBLIC_VIEW="/storage/emulated/0/drive"
+BIND_UID=1023
+BIND_GID=1023
+BIND_PERMS=0770
+CRYPTSETUP_BIN="/data/data/com.termux/files/usr/bin/cryptsetup"
+LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
+BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"
+NSENTER_BIN="/data/data/com.termux/files/usr/bin/nsenter"
+ISODRIVE_BIN="/system/bin/isodrive"
+
+VERBOSE=0
+COMMAND=""
+STATE="BROKEN"
+STATE_REASON=""
+LOOP=""
+
+# Cached snapshots used by state detection.
+MOUNTINFO=""
+LOCAL_MOUNTINFO=""
+MAPPER_STATUS=""
+
+# Current component states.
+ISO=0
+MAPPER=0
+REAL=0
+BIND=0
+PUBLIC=0
+LOOP_PRESENT=0
+LOOP_OK=0
+MAPPER_STACK_OK=0
+BIND_OK=0
+PUBLIC_OK=0
+ISO_OK=0
+
+# ---------------------------------------------------------------------------
+# Load config
+# ---------------------------------------------------------------------------
+if [ ! -f "$CONF_FILE" ]; then
+    printf '%s\n' "[imgdrive] ERROR: Config not found: $CONF_FILE"
+    exit 1
+fi
+# shellcheck disable=SC1090
+. "$CONF_FILE"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+log()   { printf '%s\n' "[imgdrive] $*"; }
+debug() { [ "$VERBOSE" -eq 1 ] && printf '%s\n' "[imgdrive] DEBUG: $*"; }
+die()   { log "ERROR: $*"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -v|--verbose) VERBOSE=1 ;;
+        -q|--quiet)   VERBOSE=0 ;;
+        mount|usb|toggle|sync|status|off) COMMAND="$1" ;;
+        -h|--help)
+            cat <<'USAGE'
+Usage: imgdrive-ctl [-v|--verbose] [-q|--quiet] [mount|usb|toggle|sync|status|off]
+
+  mount   Ensure Stage 1 (local decrypted filesystem)
+  usb     Ensure Stage 2 (raw image exported over USB)
+  toggle  Toggle Stage 1 <-> Stage 2
+  sync    USB connected => Stage 2, otherwise Stage 1
+  status  Inspect current state (no writes)
+  off     Tear down everything
+
+No command defaults to toggle.
+Config: /sdcard/Documents/imgdrive/imgdrive.conf
+USAGE
+            exit 0
+            ;;
+        *) die "Unknown argument: $1" ;;
+    esac
+    shift
+done
+
+COMMAND="${COMMAND:-toggle}"
+
+# ---------------------------------------------------------------------------
+# PID 1 / global mount namespace helpers
+# ---------------------------------------------------------------------------
+
+g_mountinfo() {
+    "$NSENTER_BIN" -t 1 -m -- cat /proc/self/mountinfo 2>/dev/null
+}
+
+g_mount() {
+    "$NSENTER_BIN" -t 1 -m -- mount "$@"
+}
+
+g_umount() {
+    "$NSENTER_BIN" -t 1 -m -- umount "$@"
+}
+
+refresh_mountinfo() {
+    MOUNTINFO="$(g_mountinfo)"
+    LOCAL_MOUNTINFO="$(cat /proc/self/mountinfo 2>/dev/null)"
+}
+
+# mountinfo format:
+#   mountID parentID major:minor root mountpoint mountOpts [optional...] - fstype source superOpts
+# Optional fields are variable-length. Returns: fstype|source|mountOpts|superOpts
+mi_entry() {
+    target="$1"
+    printf '%s\n' "$MOUNTINFO" |
+        awk -v t="$target" '
+            $5 != t { next }
+            {
+                for (i = 7; i <= NF; i++) {
+                    if ($i == "-") {
+                        printf "%s|%s|%s|%s\n", $(i+1), $(i+2), $6, $(i+3)
+                        exit
+                    }
+                }
+            }
+        '
+}
+
+mi_entry_local() {
+    target="$1"
+    printf '%s\n' "$LOCAL_MOUNTINFO" |
+        awk -v t="$target" '
+            $5 != t { next }
+            {
+                for (i = 7; i <= NF; i++) {
+                    if ($i == "-") {
+                        printf "%s|%s|%s|%s\n", $(i+1), $(i+2), $6, $(i+3)
+                        exit
+                    }
+                }
+            }
+        '
+}
+
+mi_has_opt() {
+    case ",$1," in
+        *",$2,"*) return 0 ;;
+        *)        return 1 ;;
+    esac
+}
+
+mi_path_mounted() {
+    [ -n "$(mi_entry "$1")" ]
+}
+
+mi_f2fs_ok() {
+    target="$1"; source="$2"
+    entry="$(mi_entry "$target")"
+    [ -n "$entry" ] || return 1
+    fstype="$(printf '%s\n' "$entry" | cut -d'|' -f1)"
+    src="$(printf '%s\n'    "$entry" | cut -d'|' -f2)"
+    opts="$(printf '%s\n'   "$entry" | cut -d'|' -f3)"
+    [ "$fstype" = "f2fs" ]     || return 1
+    [ "$src"    = "$source" ]  || return 1
+    mi_has_opt "$opts" rw      || return 1
+}
+
+mi_bindfs_source_ok() {
+    target="$1"; source="$2"
+    entry="$(mi_entry "$target")"
+    [ -n "$entry" ] || return 1
+    fstype="$(printf '%s\n' "$entry" | cut -d'|' -f1)"
+    src="$(printf '%s\n'    "$entry" | cut -d'|' -f2)"
+    opts="$(printf '%s\n'   "$entry" | cut -d'|' -f3)"
+    [ "$fstype" = "fuse.bindfs" ] || return 1
+    [ "$src"    = "$source" ]     || return 1
+    mi_has_opt "$opts" rw         || return 1
+}
+
+mi_bindfs_source_ok_local() {
+    target="$1"; source="$2"
+    entry="$(mi_entry_local "$target")"
+    [ -n "$entry" ] || return 1
+    fstype="$(printf '%s\n' "$entry" | cut -d'|' -f1)"
+    src="$(printf '%s\n'    "$entry" | cut -d'|' -f2)"
+    opts="$(printf '%s\n'   "$entry" | cut -d'|' -f3)"
+    [ "$fstype" = "fuse.bindfs" ] || return 1
+    [ "$src"    = "$source" ]     || return 1
+    mi_has_opt "$opts" rw         || return 1
+}
+
+g_real_f2fs_present() {
+    mi_f2fs_ok "$REAL_MOUNT" "/dev/mapper/$NAME"
+}
+
+g_bind_mounts() {
+    printf '%s\n' "$MOUNTINFO" |
+        awk -v src="$REAL_MOUNT" '
+            {
+                for (i = 7; i <= NF; i++) {
+                    if ($i == "-") {
+                        if ($(i+1) == "fuse.bindfs" && $(i+2) == src)
+                            print $5
+                        break
+                    }
+                }
+            }
+        '
+}
+
+g_bindfs_present() {
+    [ -n "$(g_bind_mounts)" ]
+}
+
+# ---------------------------------------------------------------------------
+# Image / crypt / loop helpers
+# ---------------------------------------------------------------------------
+
+image_path_match() {
+    case "$1" in
+        "$IMAGE_REAL"|"$IMAGE_USB"|"/data/media/0/ext/sdcard/$(basename "$IMAGE_REAL")")
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+mapper_status() {
+    "$CRYPTSETUP_BIN" status "$NAME" 2>/dev/null
+}
+
+mapper_active() {
+    mapper_status | grep -q ' is active\.$'
+}
+
+mapper_device_present() {
+    [ -b "/dev/mapper/$NAME" ]
+}
+
+mapper_status_consistent() {
+    status="$MAPPER_STATUS"
+    [ -n "$status" ] || return 1
+    printf '%s\n' "$status" | grep -q ' is active\.$' || return 1
+
+    loop="$(    printf '%s\n' "$status" | awk '$1=="device:"{ print $2; exit }')"
+    backing="$( printf '%s\n' "$status" | awk '$1=="loop:"  { print $2; exit }')"
+    type="$(    printf '%s\n' "$status" | awk '$1=="type:"  { print $2; exit }')"
+    mode="$(    printf '%s\n' "$status" | awk '$1=="mode:"  { print $2; exit }')"
+
+    [ -b "$loop" ]             || return 1
+    [ "$backing" = "$IMAGE_REAL" ] || return 1
+    [ "$type"    = "LUKS2" ]   || return 1
+    [ "$mode"    = "read/write" ] || return 1
+}
+
+mapper_loop_from_status() {
+    printf '%s\n' "$MAPPER_STATUS" | awk '$1=="device:"{ print $2; exit }'
+}
+
+mapper_backing_from_status() {
+    printf '%s\n' "$MAPPER_STATUS" | awk '$1=="loop:"{ print $2; exit }'
+}
+
+loop_backing()         { cat "/sys/block/$(basename "$1")/loop/backing_file" 2>/dev/null; }
+loop_ro()              { cat "/sys/block/$(basename "$1")/ro"                2>/dev/null; }
+loop_dio()             { cat "/sys/block/$(basename "$1")/loop/dio"          2>/dev/null; }
+loop_logical_sector()  { cat "/sys/block/$(basename "$1")/queue/logical_block_size" 2>/dev/null; }
+
+loop_config_ok() {
+    loop="$1"
+    [ -b "$loop" ]                                   || return 1
+    [ "$(loop_backing        "$loop")" = "$IMAGE_REAL" ] || return 1
+    [ "$(loop_logical_sector "$loop")" = "4096" ]    || return 1
+    [ "$(loop_dio            "$loop")" = "1"    ]    || return 1
+    [ "$(loop_ro             "$loop")" = "0"    ]    || return 1
+}
+
+find_image_loop() {
+    current="$(mapper_status)"
+    old="$MAPPER_STATUS"
+    MAPPER_STATUS="$current"
+
+    loop="$(mapper_loop_from_status)"
+    backing="$(mapper_backing_from_status)"
+
+    if [ -n "$loop" ] && [ -b "$loop" ] && [ "$backing" = "$IMAGE_REAL" ]; then
+        printf '%s\n' "$loop"
+        return 0
+    fi
+
+    for f in /sys/block/loop*/loop/backing_file; do
+        [ -r "$f" ] || continue
+        backing="$(cat "$f" 2>/dev/null)"
+        image_path_match "$backing" || continue
+        loop="/dev/block/$(basename "$(dirname "$(dirname "$f")")")"
+        MAPPER_STATUS="$old"
+        printf '%s\n' "$loop"
+        return 0
+    done
+
+    MAPPER_STATUS="$old"
+    return 1
+}
+
+detach_image_loops() {
+    found=0
+    for f in /sys/block/loop*/loop/backing_file; do
+        [ -r "$f" ] || continue
+        backing="$(cat "$f" 2>/dev/null)"
+        image_path_match "$backing" || continue
+        loop="/dev/block/$(basename "$(dirname "$(dirname "$f")")")"
+        found=1
+        log "Detaching loop: $loop"
+        "$LOSETUP_BIN" -d "$loop" >/dev/null 2>&1 || true
+    done
+
+    for f in /sys/block/loop*/loop/backing_file; do
+        [ -r "$f" ] || continue
+        backing="$(cat "$f" 2>/dev/null)"
+        image_path_match "$backing" || continue
+        return 1
+    done
+
+    [ "$found" -eq 1 ] && debug "All image-backed loops detached"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# USB / isodrive helpers
+# ---------------------------------------------------------------------------
+
+usb_connected() {
+    for f in /sys/class/udc/*/state; do
+        [ -r "$f" ] || continue
+        s="$(cat "$f" 2>/dev/null)"
+        case "$s" in
+            attached|powered|default|addressed|configured|suspended) return 0 ;;
+        esac
+    done
+
+    if [ -r /sys/class/android_usb/android0/state ]; then
+        s="$(cat /sys/class/android_usb/android0/state 2>/dev/null)"
+        case "$s" in
+            CONFIGURED|CONNECTED|configured|connected) return 0 ;;
+        esac
+    fi
+
+    return 1
+}
+
+isodrive_active() {
+    [ -r /config/usb_gadget/g1/UDC ] || return 1
+    [ -r /config/usb_gadget/g1/functions/mass_storage.0/lun.0/file ] || return 1
+    udc="$( cat /config/usb_gadget/g1/UDC                                         2>/dev/null)"
+    file="$(cat /config/usb_gadget/g1/functions/mass_storage.0/lun.0/file         2>/dev/null)"
+    [ -n "$udc" ] && [ -n "$file" ]
+}
+
+isodrive_file() {
+    cat /config/usb_gadget/g1/functions/mass_storage.0/lun.0/file 2>/dev/null
+}
+
+isodrive_target_ok() {
+    isodrive_active || return 1
+    [ "$(isodrive_file)" = "$IMAGE_USB" ] || return 1
+}
+
+stop_isodrive() {
+    if isodrive_active; then
+        log "Stopping isodrive"
+        "$ISODRIVE_BIN" >/dev/null 2>&1 || true
+    fi
+    i=0
+    while isodrive_active && [ "$i" -lt 5 ]; do
+        sleep 1; i=$((i+1))
+    done
+    isodrive_active && return 1 || return 0
+}
+
+start_isodrive() {
+    [ -f "$IMAGE_USB" ] || die "Image not accessible for isodrive: $IMAGE_USB"
+    log "Starting isodrive RW: $IMAGE_USB"
+    "$ISODRIVE_BIN" "$IMAGE_USB" -rw >/dev/null 2>&1 || die "isodrive failed"
+    i=0
+    while ! isodrive_target_ok && [ "$i" -lt 5 ]; do
+        sleep 1; i=$((i+1))
+    done
+    isodrive_target_ok || die "isodrive did not become active with the expected image"
+}
+
+# ---------------------------------------------------------------------------
+# Directories / bindfs
+# ---------------------------------------------------------------------------
+
+prepare_dirs() {
+    log "Preparing mountpoints"
+    mkdir -p "$REAL_MOUNT" "$USER_VIEW" || die "Could not create mountpoints"
+    chown "0:${BIND_GID}" "$REAL_MOUNT" "$USER_VIEW" 2>/dev/null || true
+    chmod 0775 "$REAL_MOUNT" "$USER_VIEW" 2>/dev/null || true
+}
+
+test_real_write() {
+    log "Testing real filesystem write"
+    testfile="$REAL_MOUNT/.imgdrive_write_test"
+    rm -f "$testfile" 2>/dev/null || true
+    touch "$testfile" 2>/dev/null && rm -f "$testfile" 2>/dev/null && \
+        { log "Real write = PASSED"; return 0; }
+    log "Real write = FAILED"; return 1
+}
+
+test_bindfs_write() {
+    log "Testing bindfs write"
+    testfile="$USER_VIEW/.imgdrive_bindfs_write_test"
+    rm -f "$testfile" 2>/dev/null || true
+    touch "$testfile" 2>/dev/null && rm -f "$testfile" 2>/dev/null && \
+        { log "bindfs write = PASSED"; return 0; }
+    log "bindfs write = FAILED"; return 1
+}
+
+bindfs_view_ok() {
+    mi_bindfs_source_ok       "$USER_VIEW"   "$REAL_MOUNT" && return 0
+    mi_bindfs_source_ok       "$PUBLIC_VIEW" "$REAL_MOUNT" && return 0
+    mi_bindfs_source_ok_local "$USER_VIEW"   "$REAL_MOUNT" && return 0
+    mi_bindfs_source_ok_local "$PUBLIC_VIEW" "$REAL_MOUNT" && return 0
+    return 1
+}
+
+public_view_ok() {
+    [ -d "$PUBLIC_VIEW" ] || return 1
+    user_meta="$(  stat -c '%u:%g:%a:%F' "$USER_VIEW"   2>/dev/null)" || return 1
+    public_meta="$(stat -c '%u:%g:%a:%F' "$PUBLIC_VIEW" 2>/dev/null)" || return 1
+    [ "$user_meta" = "$public_meta" ]
+}
+
+wait_public_view() {
+    i=0
+    while [ "$i" -lt 15 ]; do
+        refresh_mountinfo
+        public_view_ok && { log "Public Android view = ACCESSIBLE"; return 0; }
+        sleep 1; i=$((i+1))
+    done
+    log "Public Android view = FAILED"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+cleanup_android_filesystem() {
+    refresh_mountinfo
+    log "===== CLEAN ANDROID FILESYSTEM ====="
+
+    mounts="$(g_bind_mounts | sort -r)"
+    for mp in $mounts; do
+        [ -n "$mp" ] || continue
+        log "Unmounting bindfs: $mp"
+        g_umount    "$mp" >/dev/null 2>&1 ||
+        g_umount -l "$mp" >/dev/null 2>&1 || true
+    done
+
+    for mp in \
+        "$USER_VIEW" \
+        "$PUBLIC_VIEW" \
+        /mnt/androidwritable/0/emulated/0/"$(basename "$USER_VIEW")" \
+        /mnt/installer/0/emulated/0/"$(basename "$USER_VIEW")" \
+        /mnt/user/0/emulated/0/"$(basename "$USER_VIEW")" \
+        /mnt/pass_through/0/emulated/0/"$(basename "$USER_VIEW")"
+    do
+        g_umount "$mp" >/dev/null 2>&1 || true
+    done
+
+    refresh_mountinfo
+
+    if g_real_f2fs_present; then
+        log "Unmounting F2FS: $REAL_MOUNT"
+        g_umount    "$REAL_MOUNT" >/dev/null 2>&1 || true
+        refresh_mountinfo
+        if g_real_f2fs_present; then
+            log "Trying lazy unmount of F2FS"
+            g_umount -l "$REAL_MOUNT" >/dev/null 2>&1 || true
+            refresh_mountinfo
+        fi
+    fi
+
+    if g_bindfs_present          ||
+       mi_path_mounted "$USER_VIEW"   ||
+       mi_path_mounted "$PUBLIC_VIEW" ||
+       g_real_f2fs_present
+    then
+        log "Android filesystem layer = DIRTY"; return 1
+    fi
+
+    log "Android filesystem layer = CLEAN"
+}
+
+close_mapper() {
+    if mapper_active; then
+        log "===== CLOSE LUKS ====="
+        "$CRYPTSETUP_BIN" luksClose "$NAME" >/dev/null 2>&1 || true
+        mapper_active && { log "LUKS mapper = DIRTY"; return 1; }
+    fi
+    log "LUKS mapper = CLEAN"
+}
+
+# ---------------------------------------------------------------------------
+# State detection
+# ---------------------------------------------------------------------------
+
+refresh_state() {
+    refresh_mountinfo
+    MAPPER_STATUS="$(mapper_status)"
+
+    ISO=0; MAPPER=0; REAL=0; BIND=0; PUBLIC=0
+    LOOP_PRESENT=0; LOOP_OK=0; MAPPER_STACK_OK=0
+    BIND_OK=0; PUBLIC_OK=0; ISO_OK=0
+    STATE_REASON=""; LOOP=""
+
+    if isodrive_target_ok; then
+        ISO=1; ISO_OK=1
+    elif isodrive_active; then
+        ISO=1
+    fi
+
+    if mapper_active || mapper_device_present; then
+        MAPPER=1
+    fi
+
+    if [ "$MAPPER" -eq 1 ]; then
+        LOOP="$(mapper_loop_from_status)"
+        backing="$(mapper_backing_from_status)"
+
+        if mapper_status_consistent; then
+            MAPPER_STACK_OK=1
+        elif
+            [ -b "/dev/mapper/$NAME" ] &&
+            [ -n "$LOOP" ] && [ -b "$LOOP" ] &&
+            [ "$backing" = "$IMAGE_REAL" ]
+        then
+            MAPPER_STACK_OK=1
+        fi
+    else
+        LOOP="$(find_image_loop 2>/dev/null)"
+    fi
+
+    if [ -n "$LOOP" ] && [ -b "$LOOP" ]; then
+        LOOP_PRESENT=1
+        loop_config_ok "$LOOP" && LOOP_OK=1
+    fi
+
+    g_real_f2fs_present && REAL=1
+    bindfs_view_ok      && BIND=1 && BIND_OK=1
+    public_view_ok      && PUBLIC=1 && PUBLIC_OK=1
+
+    if
+        [ "$ISO"              -eq 0 ] &&
+        [ "$MAPPER"           -eq 1 ] &&
+        [ "$MAPPER_STACK_OK"  -eq 1 ] &&
+        [ "$LOOP_OK"          -eq 1 ] &&
+        [ "$REAL"             -eq 1 ] &&
+        [ "$BIND_OK"          -eq 1 ] &&
+        [ "$PUBLIC_OK"        -eq 1 ]
+    then
+        STATE="STAGE1"
+        STATE_REASON="all Stage 1 invariants satisfied"
+
+    elif
+        [ "$ISO_OK"       -eq 1 ] &&
+        [ "$MAPPER"       -eq 0 ] &&
+        [ "$REAL"         -eq 0 ] &&
+        [ "$BIND"         -eq 0 ] &&
+        [ "$LOOP_PRESENT" -eq 0 ]
+    then
+        STATE="STAGE2"
+        STATE_REASON="isodrive exports the expected image and local stack is absent"
+
+    else
+        STATE="BROKEN"
+
+        if   [ "$ISO"             -eq 1 ] && [ "$ISO_OK"          -eq 0 ]; then
+            STATE_REASON="isodrive is active but exports an unexpected image"
+        elif [ "$MAPPER"          -eq 1 ] && [ "$MAPPER_STACK_OK" -eq 0 ]; then
+            STATE_REASON="LUKS mapper is active but its loop/backing/mode/type is unexpected"
+        elif [ "$LOOP_PRESENT"    -eq 1 ] && [ "$LOOP_OK"         -eq 0 ]; then
+            STATE_REASON="image loop exists but is not 4096-byte DIO RW on the real image"
+        elif [ "$REAL"            -eq 0 ] && [ "$MAPPER"          -eq 1 ]; then
+            STATE_REASON="LUKS is active but the expected RW F2FS mount is missing"
+        elif [ "$BIND_OK"         -eq 0 ] && [ "$REAL"            -eq 1 ]; then
+            STATE_REASON="bindfs view is missing or has unexpected source/ownership/mode"
+        elif [ "$PUBLIC_OK"       -eq 0 ] && [ "$BIND"            -eq 1 ]; then
+            STATE_REASON="public Android view is missing or does not match bindfs view"
+        elif [ "$MAPPER"          -eq 0 ] && [ "$LOOP_PRESENT"    -eq 1 ]; then
+            STATE_REASON="image loop exists without the expected LUKS mapper"
+        elif [ "$ISO_OK"          -eq 1 ] && [ "$LOOP_PRESENT"    -eq 1 ]; then
+            STATE_REASON="isodrive is active while an image loop remains"
+        else
+            STATE_REASON="components do not match either complete Stage 1 or Stage 2"
+        fi
+    fi
+
+    debug "USB=$(usb_connected && echo CONNECTED || echo DISCONNECTED)"
+    debug "isodrive=$([ "$ISO"    -eq 1 ] && echo ACTIVE  || echo CLEAN)"
+    debug "isoOK=$(   [ "$ISO_OK" -eq 1 ] && echo OK      || echo INVALID)"
+    debug "LUKS=$(    [ "$MAPPER" -eq 1 ] && echo ACTIVE  || echo CLEAN)"
+    debug "LUKSstack=$([ "$MAPPER_STACK_OK" -eq 1 ] && echo OK || echo INVALID)"
+    debug "Loop=${LOOP:-NONE}"
+    if [ -n "$LOOP" ]; then
+        debug "LoopBacking=$(loop_backing        "$LOOP")"
+        debug "LoopSector=$( loop_logical_sector "$LOOP")"
+        debug "LoopDIO=$(    loop_dio            "$LOOP")"
+        debug "LoopRO=$(     loop_ro             "$LOOP")"
+    fi
+    debug "F2FS=$(   [ "$REAL"      -eq 1 ] && echo RW   || echo MISSING)"
+    debug "bindfs=$( [ "$BIND_OK"   -eq 1 ] && echo OK   || echo INVALID)"
+    debug "public=$( [ "$PUBLIC_OK" -eq 1 ] && echo OK   || echo INVALID)"
+    debug "State=$STATE ($STATE_REASON)"
+}
+
+# ---------------------------------------------------------------------------
+# Status command
+# ---------------------------------------------------------------------------
+
+status_command() {
+    refresh_state
+    log "===== STATUS ====="
+    log "State       = $STATE"
+    log "Reason      = $STATE_REASON"
+    log "Image       = $IMAGE_REAL"
+    log "Loop        = ${LOOP:-NONE}"
+    log "Mapper      = /dev/mapper/$NAME"
+    log "Real mount  = $REAL_MOUNT"
+    log "User view   = $USER_VIEW"
+    log "Public view = $PUBLIC_VIEW"
+    if [ "$ISO" -eq 1 ]; then
+        log "ISOdrive    = ACTIVE"
+        log "ISO image   = $(isodrive_file)"
+    else
+        log "ISOdrive    = CLEAN"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Stage 1
+# ---------------------------------------------------------------------------
+
+start_stage1() {
+    refresh_state
+
+    log "===== ENSURE STAGE 1 ====="
+    log "Image      = $IMAGE_REAL"
+    log "Real mount = $REAL_MOUNT"
+    log "User view  = $USER_VIEW"
+
+    if [ "$STATE" = "STAGE1" ]; then
+        log "Stage 1 already intact — nothing to do"
+        return 0
+    fi
+
+    if [ "$STATE" = "STAGE2" ] || isodrive_active; then
+        stop_isodrive || die "Could not stop isodrive"
+    fi
+
+    cleanup_android_filesystem || die "Could not clean Android filesystem layer"
+    close_mapper               || die "Could not close existing LUKS mapper"
+    detach_image_loops         || die "Could not detach stale image loop(s)"
+
+    [ -f "$IMAGE_REAL" ] || die "Image not found: $IMAGE_REAL"
+    [ -r "$KEYFILE" ]    || die "Keyfile not readable: $KEYFILE"
+
+    prepare_dirs
+
+    # -----------------------------------------------------------------------
+    # Loop — 4K logical sectors + direct I/O required for loop-backed
+    # files on SD-card F2FS under Android 6.6 kernels.
+    # -----------------------------------------------------------------------
+    log "Creating loop (4096-byte sectors, DIO)"
+    LOOP="$("$LOSETUP_BIN" -f --show --sector-size 4096 --direct-io=on "$IMAGE_REAL" 2>/dev/null)" ||
+        die "losetup failed"
+    [ -n "$LOOP" ] || die "losetup returned no loop device"
+    log "Loop = $LOOP"
+
+    loop_config_ok "$LOOP" || {
+        "$LOSETUP_BIN" -d "$LOOP" >/dev/null 2>&1 || true
+        die "Loop config not 4096-byte + DIO + RW"
+    }
+
+    # -----------------------------------------------------------------------
+    # LUKS2
+    # -----------------------------------------------------------------------
+    log "Checking LUKS header"
+    "$CRYPTSETUP_BIN" isLuks "$LOOP" >/dev/null 2>&1 || {
+        "$LOSETUP_BIN" -d "$LOOP" >/dev/null 2>&1 || true
+        die "Invalid LUKS header"
+    }
+
+    log "Opening LUKS mapper: $NAME"
+    # May print "chown failed" even on success; verify with cryptsetup status.
+    "$CRYPTSETUP_BIN" luksOpen "$LOOP" "$NAME" --key-file "$KEYFILE" >/dev/null 2>&1 || true
+
+    mapper_active || {
+        "$LOSETUP_BIN" -d "$LOOP" >/dev/null 2>&1 || true
+        die "LUKS mapper failed to become active"
+    }
+    log "LUKS mapper = ACTIVE"
+
+    fs_type="$(/system/bin/blkid -o value -s TYPE "/dev/mapper/$NAME" 2>/dev/null)"
+    [ "$fs_type" = "f2fs" ] || die "Inner filesystem is not F2FS (detected: ${fs_type:-unknown})"
+    log "Inner filesystem = F2FS"
+
+    # -----------------------------------------------------------------------
+    # F2FS
+    # -----------------------------------------------------------------------
+    log "Mounting F2FS RW: $REAL_MOUNT"
+    g_mount -t f2fs -o rw "/dev/mapper/$NAME" "$REAL_MOUNT" >/dev/null 2>&1 ||
+        die "F2FS mount failed"
+
+    refresh_mountinfo
+    g_real_f2fs_present || die "F2FS mount not visible after mounting"
+    log "F2FS = RW"
+
+    test_real_write || die "Real F2FS write test failed"
+
+    # -----------------------------------------------------------------------
+    # bindfs
+    # -----------------------------------------------------------------------
+    log "Mounting bindfs: $REAL_MOUNT -> $USER_VIEW (${BIND_UID}:${BIND_GID} / $BIND_PERMS)"
+    "$NSENTER_BIN" -t 1 -m -- env \
+        PATH="$PATH" \
+        LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
+        "$BINDFS_BIN" \
+        -u "$BIND_UID" \
+        -g "$BIND_GID" \
+        --perms="$BIND_PERMS" \
+        --create-with-perms=g+s \
+        "$REAL_MOUNT" \
+        "$USER_VIEW" \
+        >/dev/null 2>&1 ||
+        die "bindfs mount failed"
+
+    refresh_mountinfo
+    bindfs_view_ok || die "bindfs view did not match expected config"
+    log "bindfs = ACTIVE"
+
+    test_bindfs_write || die "bindfs write test failed"
+
+    wait_public_view || die "Android public view did not appear"
+
+    refresh_state
+    [ "$STATE" = "STAGE1" ] || die "Stage 1 verification failed: $STATE ($STATE_REASON)"
+
+    log "===== STAGE 1 READY ====="
+    log "Loop   = $LOOP"
+    log "Mapper = /dev/mapper/$NAME"
+    log "Mount  = $REAL_MOUNT"
+    log "View   = $USER_VIEW"
+}
+
+# ---------------------------------------------------------------------------
+# Stage 2
+# ---------------------------------------------------------------------------
+
+start_stage2() {
+    refresh_state
+
+    log "===== ENSURE STAGE 2 ====="
+
+    if ! usb_connected; then
+        log "USB not connected — Stage 2 cannot start"
+        return 1
+    fi
+
+    if [ "$STATE" = "STAGE2" ]; then
+        log "Stage 2 already intact — nothing to do"
+        return 0
+    fi
+
+    isodrive_active && { stop_isodrive || true; }
+
+    cleanup_android_filesystem || die "Could not clean Android filesystem layer"
+    close_mapper               || die "Could not close existing LUKS mapper"
+    detach_image_loops         || die "Could not detach stale image loop(s)"
+
+    sync
+    start_isodrive
+
+    refresh_state
+    [ "$STATE" = "STAGE2" ] || die "Stage 2 verification failed: $STATE ($STATE_REASON)"
+
+    log "===== STAGE 2 READY ====="
+    log "Image = $IMAGE_USB"
+}
+
+# ---------------------------------------------------------------------------
+# Full shutdown
+# ---------------------------------------------------------------------------
+
+stop_everything() {
+    log "===== STOP EVERYTHING ====="
+
+    stop_isodrive              || die "Could not stop isodrive"
+    cleanup_android_filesystem || die "Could not clean Android filesystem layer"
+    close_mapper               || die "Could not close LUKS mapper"
+    detach_image_loops         || die "Could not detach image loop(s)"
+
+    refresh_mountinfo
+
+    if  ! isodrive_active      &&
+        ! mapper_active        &&
+        ! g_real_f2fs_present  &&
+        ! g_bindfs_present     &&
+        [ -z "$(find_image_loop 2>/dev/null)" ]
+    then
+        log "Everything = CLEAN"; return 0
+    fi
+
+    log "Everything = DIRTY"; return 1
+}
+
+# ---------------------------------------------------------------------------
+# Command dispatch
+# ---------------------------------------------------------------------------
+
+cmd_toggle() {
+    refresh_state
+    case "$STATE" in
+        STAGE1)  start_stage2 ;;
+        STAGE2)  start_stage1 ;;
+        BROKEN)
+            if usb_connected; then start_stage2
+            else                   start_stage1
+            fi ;;
+    esac
+}
+
+cmd_sync() {
+    if usb_connected; then start_stage2
+    else                   start_stage1
+    fi
+}
+
+case "$COMMAND" in
+    mount)  start_stage1    ;;
+    usb)    start_stage2    ;;
+    toggle) cmd_toggle      ;;
+    sync)   cmd_sync        ;;
+    status) status_command  ;;
+    off)    stop_everything ;;
+    *) die "Unknown command: $COMMAND" ;;
+esac
