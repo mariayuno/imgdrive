@@ -16,3 +16,8 @@ fi
 # Ensure the module service script is executable.
 chmod 0755 "$MODPATH/service.sh"
 chmod 0755 "$MODPATH/post-fs-data.sh"
+
+# Install binaries to persistent path (survives module updates).
+mkdir -p /data/adb/imgdrive/bin
+cp "$MODPATH/common/"* /data/adb/imgdrive/bin/
+chmod 0755 /data/adb/imgdrive/bin/*
