@@ -356,6 +356,88 @@
     text-align: right; padding: 2px 0;
   }
 
+  /* ── Drive selector bar ── */
+  .drive-bar {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 16px;
+  }
+  .drive-select {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 13px; outline: none; cursor: pointer;
+  }
+  .drive-select:focus { border-color: var(--accent); }
+  .drive-add-btn, .drive-del-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 16px; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  .drive-del-btn { color: #ef4444; }
+
+  /* ── LUKS warning ── */
+  .luks-warning {
+    background: rgba(234,179,8,.15); border: 1px solid rgba(234,179,8,.5);
+    border-radius: 10px; padding: 10px 14px; font-size: 12.5px;
+    color: #ca8a04; margin-bottom: 14px; display: none;
+  }
+  .luks-warning.show { display: block; }
+
+  /* ── Key management modal ── */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    z-index: 100; display: none; align-items: flex-end;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 20px 20px 0 0;
+    width: 100%; max-height: 85vh; overflow-y: auto;
+    padding: 20px 16px 32px; box-sizing: border-box;
+  }
+  .modal-title {
+    font-size: 17px; font-weight: 700; margin-bottom: 4px;
+  }
+  .modal-sub {
+    font-size: 12px; color: var(--muted); margin-bottom: 16px;
+  }
+  .modal-close {
+    position: absolute; right: 20px; top: 16px;
+    background: none; border: none; font-size: 22px;
+    color: var(--muted); cursor: pointer; padding: 4px;
+  }
+  .slot-list { margin-bottom: 16px; }
+  .slot-item {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .slot-badge {
+    background: rgba(34,197,94,.2); color: #16a34a;
+    border-radius: 5px; padding: 2px 7px; font-size: 11px; font-weight: 600;
+  }
+  .slot-rm-btn {
+    background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3);
+    border-radius: 6px; padding: 4px 10px; color: #ef4444;
+    font-size: 12px; cursor: pointer;
+  }
+  .keys-section-head {
+    font-size: 12px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 8px;
+  }
+  .keys-input-row {
+    display: flex; gap: 8px; margin-bottom: 8px;
+  }
+  .keys-input-row input {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 13px; outline: none;
+  }
+  .keys-input-row input:focus { border-color: var(--accent); }
+  .keys-input-row button {
+    background: var(--accent); border: none; border-radius: 8px;
+    padding: 10px 14px; color: #fff; font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+  }
+
   /* ── Setup storage ── */
   .setup-row {
     display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
@@ -429,6 +511,21 @@
     </div>
   </div>
 
+  <!-- Drive selector -->
+  <div class="drive-bar">
+    <select class="drive-select" id="driveSelect" onchange="switchDrive(this.value)">
+      <option value="/sdcard/Documents/imgdrive/imgdrive.conf">imgdrive (primary)</option>
+    </select>
+    <button class="drive-add-btn" onclick="addDrive()" title="Add drive">＋</button>
+    <button class="drive-del-btn" onclick="deleteDrive()" title="Remove drive">🗑</button>
+  </div>
+
+  <!-- LUKS slot warning -->
+  <div class="luks-warning" id="luksWarning">
+    ⚠️ Only <span id="luksSlotCount">1</span> LUKS key slot active — if this keyfile is lost the drive is unrecoverable.
+    <a href="#" onclick="openKeysModal();return false" style="color:inherit;font-weight:700"> Add a passphrase backup →</a>
+  </div>
+
   <!-- Component indicators -->
   <div class="section-head">Components</div>
   <div class="indicators">
@@ -485,6 +582,11 @@
       <span class="btn-icon">⏹</span>Stop Everything
     </button>
   </div>
+  <div class="btn-grid" style="grid-template-columns:1fr;margin-top:6px">
+    <button class="btn" style="background:var(--surface2);border:1px solid var(--border)" onclick="openKeysModal()">
+      <span class="btn-icon">🔐</span>Manage Keys
+    </button>
+  </div>
 
   <!-- Info -->
   <div class="section-head">Details</div>
@@ -532,6 +634,43 @@
   <button class="conf-btn" onclick="writeDefaultConf()">📄 Write Default Config</button>
   <textarea class="conf-textarea" id="confText" spellcheck="false" placeholder="Loading config…"></textarea>
   <button class="save-btn" onclick="saveConf()">💾 Save Config</button>
+
+<!-- Key management modal -->
+<div class="modal-overlay" id="keysModal" onclick="if(event.target===this)closeKeysModal()">
+  <div class="modal" style="position:relative">
+    <button class="modal-close" onclick="closeKeysModal()">✕</button>
+    <div class="modal-title">🔐 Manage Keys</div>
+    <div class="modal-sub" id="keysModalSub">Loading…</div>
+
+    <div class="keys-section-head">Active key slots</div>
+    <div class="slot-list" id="slotList"><div style="color:var(--muted);font-size:13px">Loading…</div></div>
+
+    <div class="keys-section-head">Add passphrase</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+      Authorised by existing keyfile. Passphrase is piped via shell — avoid shell-special characters for safety.
+    </div>
+    <div class="keys-input-row">
+      <input type="password" id="newPassphrase" placeholder="New passphrase…" autocomplete="new-password">
+      <button onclick="addPassphrase()">Add</button>
+    </div>
+
+    <div class="keys-section-head">Add keyfile slot</div>
+    <div class="keys-input-row">
+      <input type="text" id="newKeyfilePath" placeholder="/sdcard/Documents/imgdrive/backup.key">
+      <button onclick="addKeyfileSlot()">Add</button>
+    </div>
+
+    <div class="keys-section-head">Remove slot</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+      Authorised by current keyfile. Cannot remove the last slot.
+    </div>
+    <div class="keys-input-row">
+      <input type="number" id="removeSlotNum" placeholder="Slot number" min="0" max="31">
+      <button onclick="removeSlot()" style="background:rgba(239,68,68,.8)">Remove</button>
+    </div>
+    <div class="setup-log show" id="keysLog" style="margin-top:10px;display:none"></div>
+  </div>
+</div>
 
 </main>
 
@@ -762,11 +901,24 @@ function applyState(s) {
     lb.textContent = s.log || '(empty)';
     lb.scrollTop = lb.scrollHeight;
   }
+  // LUKS slot warning
+  const warn = document.getElementById('luksWarning');
+  const slotSpan = document.getElementById('luksSlotCount');
+  if (s.img_real && s.luks_slots !== undefined) {
+    const slots = parseInt(s.luks_slots, 10) || 0;
+    slotSpan.textContent = slots;
+    warn.classList.toggle('show', slots < 2 && slots > 0);
+  } else {
+    warn.classList.remove('show');
+  }
 }
+
+// ── Active drive ─────────────────────────────────────────────────────
+let activeDrive = '/sdcard/Documents/imgdrive/imgdrive.conf';
 
 // ── Refresh / status poll ────────────────────────────────────────────
 async function refresh() {
-  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-status');
+  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-status -c ' + JSON.stringify(activeDrive));
   // Try to parse stdout regardless of errno — KernelSU can return non-zero
   // errno even when the script itself exits 0 (subcommand exit codes bubble up
   // in some exec implementations). Valid JSON always wins.
@@ -788,7 +940,7 @@ async function refresh() {
 // ── Run command ──────────────────────────────────────────────────────
 async function run(cmd, msg) {
   showSpinner(msg);
-  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-ctl ' + cmd);
+  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-ctl -c ' + JSON.stringify(activeDrive) + ' ' + cmd);
   hideSpinner();
   if (r.errno !== 0) {
     toast('❌ Failed: ' + (r.stderr || r.stdout || 'unknown error'), 4000);
@@ -800,36 +952,30 @@ async function run(cmd, msg) {
 
 // ── Config load/save ─────────────────────────────────────────────────
 async function loadConf() {
-  const r = await shellExec('cat /sdcard/Documents/imgdrive/imgdrive.conf 2>/dev/null || echo "__NOT_FOUND__"');
+  const r = await shellExec('cat ' + JSON.stringify(activeDrive) + ' 2>/dev/null || echo "__NOT_FOUND__"');
   const ta = document.getElementById('confText');
   if (r.stdout && r.stdout.trim() !== '__NOT_FOUND__') {
     ta.value = r.stdout;
   } else {
-    ta.value = '# Config not found.\n# Tap Save to create a default config.';
+    ta.value = '# Config not found.\n# Tap "Write Default Config" to create one.';
   }
 }
 
 async function saveConf() {
   const text = document.getElementById('confText').value;
   if (!text.trim()) { toast('⚠️ Empty config — not saved'); return; }
-  // Write via printf to avoid issues with special chars in heredoc
-  const escaped = text
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "'\\''");
-  const cmd = "mkdir -p /sdcard/Documents/imgdrive && printf '%s' '" + escaped + "' > /sdcard/Documents/imgdrive/imgdrive.conf";
+  const escaped = text.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
+  const dir = activeDrive.replace(/\/[^/]+$/, '');
+  const cmd = "mkdir -p " + JSON.stringify(dir) + " && printf '%s' '" + escaped + "' > " + JSON.stringify(activeDrive);
   showSpinner('Saving config…');
   const r = await shellExec(cmd);
   hideSpinner();
-  if (r.errno !== 0) {
-    toast('❌ Save failed: ' + (r.stderr || ''), 4000);
-  } else {
-    toast('✅ Config saved');
-  }
+  r.errno !== 0 ? toast('❌ Save failed: ' + (r.stderr || ''), 4000) : toast('✅ Config saved');
 }
 
 async function writeDefaultConf() {
   showSpinner('Writing default config…');
-  const r = await shellExec('/data/adb/imgdrive/bin/write-default-conf /sdcard/Documents/imgdrive/imgdrive.conf');
+  const r = await shellExec('/data/adb/imgdrive/bin/write-default-conf ' + JSON.stringify(activeDrive));
   hideSpinner();
   if (r.errno !== 0) {
     toast('❌ Failed: ' + (r.stderr || r.stdout || ''), 4000);
@@ -837,6 +983,216 @@ async function writeDefaultConf() {
     toast('✅ Default config written');
     await loadConf();
   }
+}
+
+// ── Multi-drive ───────────────────────────────────────────────────────
+async function loadDrives() {
+  const r = await shellExec(
+    '(ls /sdcard/Documents/imgdrive/conf.d/*.conf 2>/dev/null; ' +
+    '[ -f /sdcard/Documents/imgdrive/imgdrive.conf ] && echo /sdcard/Documents/imgdrive/imgdrive.conf) | sort -u'
+  );
+  const sel = document.getElementById('driveSelect');
+  const paths = (r.stdout || '').trim().split('\n').filter(Boolean);
+  if (!paths.length) paths.push('/sdcard/Documents/imgdrive/imgdrive.conf');
+  sel.innerHTML = '';
+  paths.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p;
+    const name = p.replace(/.*\//, '').replace(/\.conf$/, '');
+    opt.textContent = name === 'imgdrive' ? 'imgdrive (primary)' : name;
+    if (p === activeDrive) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+async function switchDrive(conf) {
+  activeDrive = conf;
+  await Promise.all([refresh(), loadConf()]);
+}
+
+async function addDrive() {
+  const name = prompt('Drive name (alphanumeric, no spaces):');
+  if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) { toast('⚠️ Invalid name'); return; }
+  const conf = '/sdcard/Documents/imgdrive/conf.d/' + name + '.conf';
+  showSpinner('Creating drive…');
+  const r = await shellExec(
+    'mkdir -p /sdcard/Documents/imgdrive/conf.d && ' +
+    '/data/adb/imgdrive/bin/write-default-conf ' + JSON.stringify(conf)
+  );
+  hideSpinner();
+  if (r.errno !== 0) { toast('❌ Failed: ' + (r.stderr || r.stdout || ''), 4000); return; }
+  activeDrive = conf;
+  await loadDrives();
+  document.getElementById('driveSelect').value = conf;
+  await Promise.all([refresh(), loadConf()]);
+  toast('✅ Drive created — edit config then run Setup Storage');
+}
+
+async function deleteDrive() {
+  if (activeDrive === '/sdcard/Documents/imgdrive/imgdrive.conf') {
+    toast('⚠️ Cannot remove the primary drive'); return;
+  }
+  if (!confirm('Remove conf file for this drive? (image file is not deleted)')) return;
+  showSpinner('Removing…');
+  await shellExec('rm -f ' + JSON.stringify(activeDrive));
+  hideSpinner();
+  activeDrive = '/sdcard/Documents/imgdrive/imgdrive.conf';
+  await loadDrives();
+  document.getElementById('driveSelect').value = activeDrive;
+  await Promise.all([refresh(), loadConf()]);
+  toast('Drive conf removed');
+}
+
+// ── Key management ────────────────────────────────────────────────────
+function klog(msg) {
+  const el = document.getElementById('keysLog');
+  el.style.display = 'block';
+  el.textContent += msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function klogClear() {
+  const el = document.getElementById('keysLog');
+  el.style.display = 'none'; el.textContent = '';
+}
+
+async function openKeysModal() {
+  document.getElementById('keysModal').classList.add('show');
+  await loadKeySlots();
+}
+function closeKeysModal() {
+  document.getElementById('keysModal').classList.remove('show');
+  klogClear();
+}
+
+async function loadKeySlots() {
+  const sub  = document.getElementById('keysModalSub');
+  const list = document.getElementById('slotList');
+  sub.textContent  = 'Loading…';
+  list.innerHTML   = '<div style="color:var(--muted);font-size:13px">Reading LUKS header…</div>';
+
+  // Source config to get IMAGE_REAL and CRYPTSETUP_BIN
+  const cr = await shellExec(
+    '. ' + JSON.stringify(activeDrive) + ' 2>/dev/null && ' +
+    'printf "%s\\n%s\\n" "$IMAGE_REAL" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}"'
+  );
+  if (!cr.stdout) { sub.textContent = 'Could not read config'; list.innerHTML = ''; return; }
+  const [IMAGE_REAL, CRYPTSETUP_BIN] = cr.stdout.trim().split('\n');
+
+  if (!IMAGE_REAL || IMAGE_REAL.includes('<') || !(await fileExists(IMAGE_REAL))) {
+    sub.textContent = 'Image not found — set IMAGE_REAL in config and run Setup Storage first.';
+    list.innerHTML = ''; return;
+  }
+
+  const dr = await shellExec(JSON.stringify(CRYPTSETUP_BIN) + ' luksDump ' + JSON.stringify(IMAGE_REAL) + ' 2>&1');
+  const dump = dr.stdout || '';
+
+  // Parse LUKS2 slot lines: "  0: luks2" or "  1: DISABLED"
+  const slots = [];
+  dump.split('\n').forEach(line => {
+    const m = line.match(/^\s+(\d+):\s+(\S+)/);
+    if (m && m[2].toLowerCase() !== 'disabled') slots.push(parseInt(m[1], 10));
+  });
+
+  sub.textContent = IMAGE_REAL + ' — ' + slots.length + ' active slot(s)';
+  if (!slots.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px">No active slots found — LUKS header may be unreadable.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  slots.forEach(n => {
+    const item = document.createElement('div');
+    item.className = 'slot-item';
+    item.innerHTML =
+      '<span>Slot <strong>' + n + '</strong> <span class="slot-badge">active</span></span>' +
+      '<button class="slot-rm-btn" onclick="removeSlotN(' + n + ')">Remove</button>';
+    list.appendChild(item);
+  });
+}
+
+async function fileExists(path) {
+  const r = await shellExec('[ -f ' + JSON.stringify(path) + ' ] && echo y || echo n');
+  return (r.stdout || '').trim() === 'y';
+}
+
+async function _getImageAndCrypt() {
+  const cr = await shellExec(
+    '. ' + JSON.stringify(activeDrive) + ' 2>/dev/null && ' +
+    'printf "%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}"'
+  );
+  if (!cr.stdout) return null;
+  const [IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN] = cr.stdout.trim().split('\n');
+  return { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN };
+}
+
+async function addPassphrase() {
+  const pass = document.getElementById('newPassphrase').value;
+  if (!pass) { toast('⚠️ Enter a passphrase'); return; }
+  klogClear(); klog('▶ Adding passphrase slot…');
+  const cfg = await _getImageAndCrypt();
+  if (!cfg) { klog('✖ Could not read config'); return; }
+  const { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN } = cfg;
+  const escaped = pass.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
+  const r = await shellExec(
+    "printf '%s' '" + escaped + "' | " +
+    JSON.stringify(CRYPTSETUP_BIN) +
+    ' luksAddKey --key-file ' + JSON.stringify(KEYFILE) +
+    ' ' + JSON.stringify(IMAGE_REAL) + ' --new-keyfile-fd 0 2>&1'
+  );
+  if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
+  klog('✅ Passphrase slot added.');
+  document.getElementById('newPassphrase').value = '';
+  await loadKeySlots();
+  await refresh();
+}
+
+async function addKeyfileSlot() {
+  const newkf = document.getElementById('newKeyfilePath').value.trim();
+  if (!newkf) { toast('⚠️ Enter a keyfile path'); return; }
+  klogClear(); klog('▶ Generating keyfile: ' + newkf);
+  const cfg = await _getImageAndCrypt();
+  if (!cfg) { klog('✖ Could not read config'); return; }
+  const { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN } = cfg;
+  const dir = newkf.replace(/\/[^/]+$/, '');
+  if (!(await fileExists(newkf))) {
+    const gen = await shellExec('mkdir -p ' + JSON.stringify(dir) + ' && dd if=/dev/urandom of=' + JSON.stringify(newkf) + ' bs=64 count=1 2>&1 && chmod 600 ' + JSON.stringify(newkf));
+    if (gen.errno !== 0) { klog('✖ Keyfile generation failed:\n' + (gen.stderr || gen.stdout)); return; }
+    klog('  New keyfile generated.');
+  } else {
+    klog('  Keyfile already exists — adding as new slot.');
+  }
+  const r = await shellExec(
+    JSON.stringify(CRYPTSETUP_BIN) +
+    ' luksAddKey --key-file ' + JSON.stringify(KEYFILE) +
+    ' ' + JSON.stringify(IMAGE_REAL) + ' ' + JSON.stringify(newkf) + ' 2>&1'
+  );
+  if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
+  klog('✅ Keyfile slot added: ' + newkf);
+  document.getElementById('newKeyfilePath').value = '';
+  await loadKeySlots();
+  await refresh();
+}
+
+async function removeSlot() {
+  const n = parseInt(document.getElementById('removeSlotNum').value, 10);
+  if (isNaN(n)) { toast('⚠️ Enter a slot number'); return; }
+  await removeSlotN(n);
+}
+
+async function removeSlotN(n) {
+  klogClear(); klog('▶ Removing slot ' + n + '…');
+  const cfg = await _getImageAndCrypt();
+  if (!cfg) { klog('✖ Could not read config'); return; }
+  const { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN } = cfg;
+  const r = await shellExec(
+    JSON.stringify(CRYPTSETUP_BIN) +
+    ' luksKillSlot --key-file ' + JSON.stringify(KEYFILE) +
+    ' ' + JSON.stringify(IMAGE_REAL) + ' ' + n + ' 2>&1'
+  );
+  if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
+  klog('✅ Slot ' + n + ' removed.');
+  await loadKeySlots();
+  await refresh();
 }
 
 async function setupStorage() {
@@ -856,7 +1212,7 @@ async function setupStorage() {
   // Read config to get IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME
   slog('▶ Reading config…');
   const cr = await shellExec(
-    '. /sdcard/Documents/imgdrive/imgdrive.conf 2>/dev/null && ' +
+    '. ' + JSON.stringify(activeDrive) + ' 2>/dev/null && ' +
     'printf "%s\\n%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}" "${NAME:-drive}"'
   );
   if (!cr.stdout || cr.stdout.includes('<')) {
@@ -950,7 +1306,6 @@ document.addEventListener('visibilitychange', () => {
 // ── Init ─────────────────────────────────────────────────────────────
 (async () => {
   await loadRootApi();
-  // Show which exec backend is active
   const badge = document.getElementById('apiBadge');
   if (badge) {
     badge.textContent = _exec ? ('API: ' + _apiLabel) : 'API: manual mode';
@@ -958,6 +1313,7 @@ document.addEventListener('visibilitychange', () => {
       ? 'Root commands execute automatically via ' + _apiLabel
       : 'No root API detected — commands will show a copy/paste modal';
   }
+  await loadDrives();
   await Promise.all([refresh(), loadConf()]);
   startPoll();
 })();

@@ -1,19 +1,26 @@
 #!/sbin/sh
 # imgdrive service.sh — late_start service hook
 # Magisk / KernelSU / APatch compatible.
+#
+# Multi-drive: primary config at /sdcard/Documents/imgdrive/imgdrive.conf
+# Additional drives in /sdcard/Documents/imgdrive/conf.d/*.conf
+# Each drive gets its own background mount handler and per-drive log.
 
-LOGFILE="/data/adb/imgdrive/log/service.log"
-CONF_FILE="/sdcard/Documents/imgdrive/imgdrive.conf"
+PRIMARY_CONF="/sdcard/Documents/imgdrive/imgdrive.conf"
+CONFD_DIR="/sdcard/Documents/imgdrive/conf.d"
 CTL="/data/adb/imgdrive/bin/imgdrive-ctl"
 WRITE_CONF="/data/adb/imgdrive/bin/write-default-conf"
+LOG_DIR="/data/adb/imgdrive/log"
+LOGFILE="$LOG_DIR/service.log"
 
 _log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >> "$LOGFILE" 2>/dev/null; }
 
-# Rotate log: keep last 200 lines.
+# Rotate shared log.
 if [ -f "$LOGFILE" ]; then
     tmp="$(tail -n 200 "$LOGFILE" 2>/dev/null)"
     printf '%s\n' "$tmp" > "$LOGFILE" 2>/dev/null
 fi
+mkdir -p "$LOG_DIR"
 
 _log "===== imgdrive service start ====="
 
@@ -26,11 +33,7 @@ while [ ! -f /data/adb/imgdrive/.post_fs_done ] && [ "$i" -lt 30 ]; do
 done
 
 # ---------------------------------------------------------------------------
-# Wait for internal storage (CE) decryption to complete.
-# On FBE devices /data/adb is DE-accessible immediately; the keyfile living
-# there does NOT prove the user has unlocked the device.  We must wait for
-# sys.user.0.ce_available=1 (set by vold after the first credential unlock)
-# before touching /sdcard or attempting any mounts.
+# Wait for CE storage decryption.
 # ---------------------------------------------------------------------------
 _log "Waiting for CE storage decryption (sys.user.0.ce_available)..."
 i=0
@@ -42,14 +45,12 @@ while true; do
     if [ "$i" -eq 0 ]; then
         _log "CE not yet available — polling every 5 s (no timeout)"
     fi
-    sleep 5
-    i=$((i+1))
+    sleep 5; i=$((i+1))
 done
 _log "CE storage decrypted — proceeding"
 
 # ---------------------------------------------------------------------------
-# Wait for /sdcard to become available (emulated storage may mount late).
-# Poll up to 60 seconds.
+# Wait for /sdcard.
 # ---------------------------------------------------------------------------
 i=0
 while ! mountpoint -q /sdcard && [ "$i" -lt 60 ]; do
@@ -57,112 +58,108 @@ while ! mountpoint -q /sdcard && [ "$i" -lt 60 ]; do
 done
 
 # ---------------------------------------------------------------------------
-# Repopulate config if missing.
+# Repopulate primary config if missing.
 # ---------------------------------------------------------------------------
 _repopulate_conf() {
+    conf="$1"
     if [ -x "$WRITE_CONF" ]; then
-        "$WRITE_CONF" "$CONF_FILE" && \
-            _log "Default config written — edit $CONF_FILE and run imgdrive-ctl mount" || \
-            _log "Failed to write default config"
+        "$WRITE_CONF" "$conf" && \
+            _log "Default config written: $conf" || \
+            _log "Failed to write default config: $conf"
     else
         _log "write-default-conf not found at $WRITE_CONF"
     fi
 }
 
-if [ ! -f "$CONF_FILE" ]; then
-    _log "Config not found — writing default: $CONF_FILE"
-    _repopulate_conf
-    # A freshly written default config has placeholder values;
-    # auto-mount will correctly bail out at the validation step.
+if [ ! -f "$PRIMARY_CONF" ]; then
+    _log "Primary config not found — writing default"
+    _repopulate_conf "$PRIMARY_CONF"
 fi
 
 # ---------------------------------------------------------------------------
-# Background watcher: repopulate config whenever it goes missing.
-# Runs for the lifetime of the boot session (until reboot).
-# Only starts after CE decryption has been confirmed above.
+# Background config watcher (primary conf only).
 # ---------------------------------------------------------------------------
 (
     while true; do
         sleep 30
-        if ! mountpoint -q /sdcard; then continue; fi
-        if [ ! -f "$CONF_FILE" ]; then
-            _log "Config missing — repopulating: $CONF_FILE"
-            _repopulate_conf
-        fi
+        mountpoint -q /sdcard || continue
+        [ ! -f "$PRIMARY_CONF" ] || continue
+        _log "Primary config missing — repopulating"
+        _repopulate_conf "$PRIMARY_CONF"
     done
 ) &
 
 # ---------------------------------------------------------------------------
-# Load config.
+# Per-drive mount handler — launched as a background process per conf.
+# Each drive is independent: one failing doesn't block the others.
 # ---------------------------------------------------------------------------
-if [ ! -f "$CONF_FILE" ]; then
-    _log "Config still absent — skipping auto-mount"
-    exit 0
-fi
+_handle_drive() {
+    conf="$1"
+    # Derive drive name from conf filename for per-drive log.
+    base="$(basename "$conf" .conf)"
+    dlog="$LOG_DIR/${base}.log"
 
-# shellcheck disable=SC1090
-. "$CONF_FILE"
+    dlog() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >> "$dlog" 2>/dev/null; }
 
-AUTO_MOUNT="${AUTO_MOUNT:-1}"
-
-if [ "$AUTO_MOUNT" -ne 1 ]; then
-    _log "AUTO_MOUNT=0 — skipping"
-    exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Validate required config fields (catch unfilled placeholders).
-# ---------------------------------------------------------------------------
-for var in IMAGE_REAL KEYFILE NAME REAL_MOUNT USER_VIEW PUBLIC_VIEW \
-           CRYPTSETUP_BIN LOSETUP_BIN BINDFS_BIN NSENTER_BIN ISODRIVE_BIN; do
-    eval "val=\$$var"
-    if [ -z "$val" ]; then
-        _log "Config missing: $var — skipping auto-mount"
-        exit 0
+    # Rotate per-drive log.
+    if [ -f "$dlog" ]; then
+        tmp="$(tail -n 200 "$dlog" 2>/dev/null)"
+        printf '%s\n' "$tmp" > "$dlog" 2>/dev/null
     fi
-done
 
-# Catch unfilled placeholder values.
-case "$IMAGE_REAL" in
-    *"<"*) _log "IMAGE_REAL still a placeholder — skipping auto-mount"; exit 0 ;;
-esac
-case "$KEYFILE" in
-    *"<"*) _log "KEYFILE still a placeholder — skipping auto-mount"; exit 0 ;;
-esac
+    dlog "===== drive handler start: $conf ====="
 
-# ---------------------------------------------------------------------------
-# Phase 1: Wait for keyfile to become readable.
-# CE decryption is already confirmed above, but the keyfile itself must exist.
-# ---------------------------------------------------------------------------
-_log "Waiting for keyfile: $KEYFILE"
-while [ ! -r "$KEYFILE" ]; do
-    sleep 10
-done
-_log "Keyfile visible"
+    # Source config.
+    AUTO_MOUNT=1; IMAGE_REAL=""; KEYFILE=""
+    # shellcheck disable=SC1090
+    . "$conf" 2>/dev/null
 
-# ---------------------------------------------------------------------------
-# Phase 2: Try to mount Stage 1 for up to 30 minutes (10-second intervals).
-# ---------------------------------------------------------------------------
-_log "Beginning mount attempts (max 30 min, every 10 s)"
+    if [ "${AUTO_MOUNT:-1}" -ne 1 ]; then
+        dlog "AUTO_MOUNT=0 — skipping"
+        return
+    fi
 
-DEADLINE=$(( $(date +%s) + 1800 ))
+    # Catch unfilled placeholders.
+    case "$IMAGE_REAL" in *"<"*) dlog "IMAGE_REAL is a placeholder — skipping"; return ;; esac
+    case "$KEYFILE"    in *"<"*) dlog "KEYFILE is a placeholder — skipping";    return ;; esac
+    [ -n "$IMAGE_REAL" ] || { dlog "IMAGE_REAL empty — skipping"; return; }
+    [ -n "$KEYFILE"    ] || { dlog "KEYFILE empty — skipping";    return; }
 
-while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-    if [ ! -f "$IMAGE_REAL" ]; then
-        _log "Image not found yet: $IMAGE_REAL"
+    # Wait for keyfile.
+    dlog "Waiting for keyfile: $KEYFILE"
+    while [ ! -r "$KEYFILE" ]; do sleep 10; done
+    dlog "Keyfile visible"
+
+    # Mount loop (30-minute window).
+    DEADLINE=$(( $(date +%s) + 1800 ))
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+        if [ ! -f "$IMAGE_REAL" ]; then
+            dlog "Image not found yet: $IMAGE_REAL"
+            sleep 10; continue
+        fi
+        dlog "Attempting Stage 1 mount"
+        if "$CTL" -c "$conf" mount >> "$dlog" 2>&1; then
+            dlog "Stage 1 mount SUCCESS"; return
+        fi
+        dlog "Mount attempt failed — retrying in 10 s"
         sleep 10
-        continue
-    fi
+    done
+    dlog "Mount timed out after 30 minutes"
+}
 
-    _log "Attempting Stage 1 mount"
-    if "$CTL" mount >> "$LOGFILE" 2>&1; then
-        _log "Stage 1 mount SUCCESS"
-        exit 0
-    fi
+# ---------------------------------------------------------------------------
+# Launch handler for primary conf + all conf.d/*.conf
+# ---------------------------------------------------------------------------
+if [ -f "$PRIMARY_CONF" ]; then
+    _log "Launching handler: $PRIMARY_CONF"
+    _handle_drive "$PRIMARY_CONF" &
+fi
 
-    _log "Mount attempt failed — retrying in 10 s"
-    sleep 10
+mkdir -p "$CONFD_DIR"
+for extra_conf in "$CONFD_DIR"/*.conf; do
+    [ -f "$extra_conf" ] || continue
+    _log "Launching handler: $extra_conf"
+    _handle_drive "$extra_conf" &
 done
 
-_log "Mount timed out after 30 minutes"
-exit 1
+wait
