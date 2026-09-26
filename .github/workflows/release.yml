@@ -17,21 +17,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup SSH
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-        env:
-          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Bump version ────────────────────────────────────────────────
       - name: Bump version in module.prop
         id: bump
         run: |
@@ -51,16 +42,25 @@ jobs:
           echo "version=${NEW_VER}"       >> "$GITHUB_OUTPUT"
           echo "version_code=${NEW_CODE}" >> "$GITHUB_OUTPUT"
 
-          echo "Bumped: v${MAJOR}.$((OLD_CODE)) -> ${NEW_VER} (versionCode ${NEW_CODE})"
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          RELEASE_TAG="${VERSION}"
+          RELEASE_NAME="imgdrive ${VERSION}"
+          ARTIFACT_NAME="imgdrive-${VERSION}.zip"
 
-      # ── Build zip ───────────────────────────────────────────────────
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "artifact=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+
       - name: Build flashable zip
         id: build
         run: |
           set -e
 
           VERSION="${{ steps.bump.outputs.version }}"
-          ZIP="imgdrive-${VERSION}.zip"
+          ZIP="${{ steps.meta.outputs.artifact }}"
 
           zip -q -r "$ZIP" . \
             --exclude "*.git/*" \
@@ -73,22 +73,18 @@ jobs:
 
           SHA256=$(sha256sum "$ZIP" | cut -d' ' -f1)
 
-          echo "zip=${ZIP}"       >> "$GITHUB_OUTPUT"
+          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
-          echo "Built: $ZIP  ($SHA256)"
-
-      # ── Commit bumped module.prop ────────────────────────────────────
       - name: Commit version bump
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin git@github.com:rexackermann/imgdrive.git
+
           git add module.prop
           git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
-          git push
+          git push origin HEAD:main
 
-      # ── Generate changelog ───────────────────────────────────────────
       - name: Generate changelog
         id: changelog
         run: |
@@ -116,18 +112,17 @@ jobs:
             echo ""
             echo "## Checksums"
             echo '```'
-            echo "SHA256  ${{ steps.build.outputs.sha256 }}  ${{ steps.build.outputs.zip }}"
+            echo "SHA256  ${{ steps.build.outputs.sha256 }}  ${{ steps.meta.outputs.artifact }}"
             echo '```'
           } > release_notes.md
 
           echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
 
-      # ── Create GitHub release ────────────────────────────────────────
-      - name: Create release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.bump.outputs.version }}
-          name: imgdrive ${{ steps.bump.outputs.version }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
           body_path: ${{ steps.changelog.outputs.notes_file }}
           files: ${{ steps.build.outputs.zip }}
           draft: false
