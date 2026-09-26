@@ -114,6 +114,7 @@ jobs:
             echo '```'
             echo "SHA256  ${{ steps.build.outputs.sha256 }}  ${{ steps.meta.outputs.artifact }}"
             echo '```'
+            echo 'Enjoy !!!'
           } > release_notes.md
 
           echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
