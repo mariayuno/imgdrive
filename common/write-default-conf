@@ -1,4 +1,4 @@
-#!/sbin/sh
+#!/system/bin/sh
 # write-default-conf <conf_file>
 # Writes the default imgdrive.conf to the given path.
 # Sourced or called directly; does NOT check if file exists — caller decides.

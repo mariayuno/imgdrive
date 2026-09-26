@@ -1,17 +1,23 @@
 #!/system/bin/sh
-# imgdrive-status
+# imgdrive-status [-c <conf>]
 # Prints a JSON object describing current imgdrive state.
 # Called by the WebUI via kernelsu exec() — must be fast and stdout-only.
 
 CONF_FILE="/sdcard/Documents/imgdrive/imgdrive.conf"
 
+# Pre-parse -c/--conf before sourcing
+_take=0
+for _a in "$@"; do
+    if [ "$_take" -eq 1 ]; then CONF_FILE="$_a"; _take=0; continue; fi
+    case "$_a" in
+        -c|--conf)     _take=1 ;;
+        -c=*|--conf=*) CONF_FILE="${_a#*=}" ;;
+    esac
+done
+
 # Defaults
-NAME="drive"
-IMAGE_REAL=""
-IMAGE_USB=""
-KEYFILE=""
-REAL_MOUNT="/mnt/media_rw/drive"
-USER_VIEW="/data/media/0/drive"
+NAME="drive"; IMAGE_REAL=""; IMAGE_USB=""; KEYFILE=""
+REAL_MOUNT="/mnt/media_rw/drive"; USER_VIEW="/data/media/0/drive"
 PUBLIC_VIEW="/storage/emulated/0/drive"
 CRYPTSETUP_BIN="/data/data/com.termux/files/usr/bin/cryptsetup"
 LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
@@ -27,21 +33,11 @@ if [ -f "$CONF_FILE" ]; then
 fi
 
 # ---- helpers ----
-
 _bool() { [ "$1" -eq 1 ] && printf 'true' || printf 'false'; }
+_q()    { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-_q() {
-    # JSON-escape a string (basic: escape backslash and double-quote)
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
-}
-
-_mapper_active() {
-    "$CRYPTSETUP_BIN" status "$NAME" 2>/dev/null | grep -q ' is active\.$'
-}
-
-_mapper_device() {
-    [ -b "/dev/mapper/$NAME" ]
-}
+_mapper_active()  { "$CRYPTSETUP_BIN" status "$NAME" 2>/dev/null | grep -q ' is active\.$'; }
+_mapper_device()  { [ -b "/dev/mapper/$NAME" ]; }
 
 _isodrive_active() {
     [ -r /config/usb_gadget/g1/UDC ] || return 1
@@ -51,9 +47,7 @@ _isodrive_active() {
     [ -n "$udc" ] && [ -n "$file" ]
 }
 
-_isodrive_file() {
-    cat /config/usb_gadget/g1/functions/mass_storage.0/lun.0/file 2>/dev/null
-}
+_isodrive_file() { cat /config/usb_gadget/g1/functions/mass_storage.0/lun.0/file 2>/dev/null; }
 
 _usb_connected() {
     for f in /sys/class/udc/*/state; do
@@ -69,27 +63,20 @@ _usb_connected() {
 }
 
 _f2fs_mounted() {
-    nsenter_bin="$NSENTER_BIN"
-    [ -x "$nsenter_bin" ] || nsenter_bin="nsenter"
-    "$nsenter_bin" -t 1 -m -- cat /proc/self/mountinfo 2>/dev/null |
+    nb="$NSENTER_BIN"; [ -x "$nb" ] || nb="nsenter"
+    "$nb" -t 1 -m -- cat /proc/self/mountinfo 2>/dev/null |
         awk -v tgt="$REAL_MOUNT" -v src="/dev/mapper/$NAME" '
-            BEGIN { rc=1 }
-            $5 != tgt { next }
-            { for(i=7;i<=NF;i++) if($i=="-"){ if($(i+1)=="f2fs" && $(i+2)==src) rc=0; exit } }
-            END { exit rc }
-        '
-    return $?
+            BEGIN{rc=1} $5!=tgt{next}
+            {for(i=7;i<=NF;i++)if($i=="-"){if($(i+1)=="f2fs"&&$(i+2)==src)rc=0;exit}}
+            END{exit rc}'
 }
 
 _bindfs_mounted() {
-    nsenter_bin="$NSENTER_BIN"
-    [ -x "$nsenter_bin" ] || nsenter_bin="nsenter"
-    "$nsenter_bin" -t 1 -m -- cat /proc/self/mountinfo 2>/dev/null |
+    nb="$NSENTER_BIN"; [ -x "$nb" ] || nb="nsenter"
+    "$nb" -t 1 -m -- cat /proc/self/mountinfo 2>/dev/null |
         awk -v src="$REAL_MOUNT" '
-            { for(i=7;i<=NF;i++) if($i=="-"){ if($(i+1)=="fuse.bindfs" && $(i+2)==src){ found=1; exit } } }
-            END{ exit !found }
-        '
-    return $?
+            {for(i=7;i<=NF;i++)if($i=="-"){if($(i+1)=="fuse.bindfs"&&$(i+2)==src){found=1;exit}}}
+            END{exit !found}'
 }
 
 _find_loop() {
@@ -104,73 +91,73 @@ _find_loop() {
 }
 
 _image_size() {
-    f="$1"
-    [ -f "$f" ] || { printf 'N/A'; return; }
-    sz="$(stat -c '%s' "$f" 2>/dev/null)"
+    [ -f "$1" ] || { printf 'N/A'; return; }
+    sz="$(stat -c '%s' "$1" 2>/dev/null)"
     [ -z "$sz" ] && { printf 'N/A'; return; }
-    gb=$(( sz / 1073741824 ))
-    mb=$(( (sz % 1073741824) / 1048576 ))
-    if [ "$gb" -gt 0 ]; then
-        printf '%d.%d GB' "$gb" $(( mb * 10 / 1024 ))
-    else
-        printf '%d MB' "$mb"
-    fi
+    gb=$(( sz / 1073741824 )); mb=$(( (sz % 1073741824) / 1048576 ))
+    [ "$gb" -gt 0 ] && printf '%d.%d GB' "$gb" $(( mb * 10 / 1024 )) || printf '%d MB' "$mb"
+}
+
+_luks_slot_count() {
+    # Count active LUKS2 keyslots
+    [ -f "$IMAGE_REAL" ] || { printf '0'; return; }
+    "$CRYPTSETUP_BIN" luksDump "$IMAGE_REAL" 2>/dev/null |
+        awk '/^Keyslots:/{in_ks=1;next} in_ks && /^[[:space:]]+[0-9]+:/{n++} END{print n+0}'
 }
 
 _log_tail() {
-    tail -n 40 /data/adb/imgdrive/log/service.log 2>/dev/null |
+    logfile="/data/adb/imgdrive/log/service.log"
+    # Per-drive log if it exists, else fall back to shared log
+    name_log="/data/adb/imgdrive/log/${NAME}.log"
+    [ -f "$name_log" ] && logfile="$name_log"
+    tail -n 40 "$logfile" 2>/dev/null |
         sed 's/\\/\\\\/g; s/"/\\"/g' |
         awk 'BEGIN{ORS="\\n"} {print}'
 }
 
 # ---- gather state ----
-
-usb=0;        _usb_connected   && usb=1
-iso=0;        _isodrive_active && iso=1
-mapper=0;     { _mapper_active || _mapper_device; } && mapper=1
-f2fs=0;       _f2fs_mounted    && f2fs=1
-bindfs=0;     _bindfs_mounted  && bindfs=1
-keyfile=0;    [ -r "$KEYFILE" ] && keyfile=1
-img_real=0;   [ -f "$IMAGE_REAL" ] && img_real=1
-img_usb=0;    [ -f "$IMAGE_USB" ]  && img_usb=1
-conf_ok="$conf_loaded"
+usb=0;      _usb_connected   && usb=1
+iso=0;      _isodrive_active && iso=1
+mapper=0;   { _mapper_active || _mapper_device; } && mapper=1
+f2fs=0;     _f2fs_mounted    && f2fs=1
+bindfs=0;   _bindfs_mounted  && bindfs=1
+keyfile=0;  [ -r "$KEYFILE" ]     && keyfile=1
+img_real=0; [ -f "$IMAGE_REAL" ]  && img_real=1
+img_usb=0;  [ -f "$IMAGE_USB" ]   && img_usb=1
 
 iso_image="$(_isodrive_file)"
 loop="$(_find_loop 2>/dev/null)"
 img_size="$(_image_size "$IMAGE_REAL")"
+luks_slots="$(_luks_slot_count)"
 log="$(_log_tail)"
 
-# Derive overall state
-if   [ "$iso" -eq 0 ] && [ "$mapper" -eq 1 ] && [ "$f2fs" -eq 1 ] && [ "$bindfs" -eq 1 ]; then
-    state="STAGE1"
-elif [ "$iso" -eq 1 ] && [ "$mapper" -eq 0 ] && [ "$f2fs" -eq 0 ]; then
-    state="STAGE2"
-elif [ "$iso" -eq 0 ] && [ "$mapper" -eq 0 ] && [ "$f2fs" -eq 0 ] && [ "$bindfs" -eq 0 ]; then
-    state="OFF"
-else
-    state="BROKEN"
+if   [ "$iso" -eq 0 ] && [ "$mapper" -eq 1 ] && [ "$f2fs" -eq 1 ] && [ "$bindfs" -eq 1 ]; then state="STAGE1"
+elif [ "$iso" -eq 1 ] && [ "$mapper" -eq 0 ] && [ "$f2fs" -eq 0 ]; then state="STAGE2"
+elif [ "$iso" -eq 0 ] && [ "$mapper" -eq 0 ] && [ "$f2fs" -eq 0 ] && [ "$bindfs" -eq 0 ]; then state="OFF"
+else state="BROKEN"
 fi
 
-# ---- emit JSON ----
 printf '{'
-printf '"state":"%s",'           "$state"
-printf '"usb":%s,'               "$(_bool $usb)"
-printf '"iso":%s,'               "$(_bool $iso)"
-printf '"mapper":%s,'            "$(_bool $mapper)"
-printf '"f2fs":%s,'              "$(_bool $f2fs)"
-printf '"bindfs":%s,'            "$(_bool $bindfs)"
-printf '"keyfile":%s,'           "$(_bool $keyfile)"
-printf '"img_real":%s,'          "$(_bool $img_real)"
-printf '"img_usb":%s,'           "$(_bool $img_usb)"
-printf '"conf_ok":%s,'           "$(_bool $conf_ok)"
-printf '"loop":"%s",'            "$(_q "${loop:-none}")"
-printf '"iso_image":"%s",'       "$(_q "${iso_image:-none}")"
-printf '"image_size":"%s",'      "$(_q "$img_size")"
-printf '"name":"%s",'            "$(_q "$NAME")"
-printf '"real_mount":"%s",'      "$(_q "$REAL_MOUNT")"
-printf '"user_view":"%s",'       "$(_q "$USER_VIEW")"
-printf '"public_view":"%s",'     "$(_q "$PUBLIC_VIEW")"
-printf '"image_real":"%s",'      "$(_q "$IMAGE_REAL")"
-printf '"image_usb":"%s",'       "$(_q "$IMAGE_USB")"
-printf '"log":"%s"'              "$log"
+printf '"state":"%s",'      "$state"
+printf '"usb":%s,'          "$(_bool $usb)"
+printf '"iso":%s,'          "$(_bool $iso)"
+printf '"mapper":%s,'       "$(_bool $mapper)"
+printf '"f2fs":%s,'         "$(_bool $f2fs)"
+printf '"bindfs":%s,'       "$(_bool $bindfs)"
+printf '"keyfile":%s,'      "$(_bool $keyfile)"
+printf '"img_real":%s,'     "$(_bool $img_real)"
+printf '"img_usb":%s,'      "$(_bool $img_usb)"
+printf '"conf_ok":%s,'      "$(_bool $conf_loaded)"
+printf '"luks_slots":%s,'   "$luks_slots"
+printf '"loop":"%s",'       "$(_q "${loop:-none}")"
+printf '"iso_image":"%s",'  "$(_q "${iso_image:-none}")"
+printf '"image_size":"%s",' "$(_q "$img_size")"
+printf '"name":"%s",'       "$(_q "$NAME")"
+printf '"conf":"%s",'       "$(_q "$CONF_FILE")"
+printf '"real_mount":"%s",' "$(_q "$REAL_MOUNT")"
+printf '"user_view":"%s",'  "$(_q "$USER_VIEW")"
+printf '"public_view":"%s",' "$(_q "$PUBLIC_VIEW")"
+printf '"image_real":"%s",' "$(_q "$IMAGE_REAL")"
+printf '"image_usb":"%s",'  "$(_q "$IMAGE_USB")"
+printf '"log":"%s"'         "$log"
 printf '}'
