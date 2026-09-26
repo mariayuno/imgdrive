@@ -50,25 +50,71 @@ done
 _log "CE storage decrypted — proceeding"
 
 # ---------------------------------------------------------------------------
-# Wait for /sdcard.
+# Wait for /sdcard to be functionally readable.
+# /sdcard may be a symlink (-> /storage/self/primary) rather than a real
+# mountpoint, so mountpoint -q is unreliable. FUSE can also exist as a
+# directory but have a dead transport ("Transport endpoint is not connected").
+# Poll with an actual ls until the filesystem responds.
 # ---------------------------------------------------------------------------
+_log "Waiting for /sdcard to be readable…"
 i=0
-while ! mountpoint -q /sdcard && [ "$i" -lt 60 ]; do
+while [ "$i" -lt 120 ]; do
+    ls /sdcard/ >/dev/null 2>&1 && break
     sleep 1; i=$((i+1))
 done
+if ls /sdcard/ >/dev/null 2>&1; then
+    _log "/sdcard ready after ${i}s"
+else
+    _log "WARNING: /sdcard still unreadable after 120s — continuing anyway"
+fi
 
 # ---------------------------------------------------------------------------
 # Repopulate primary config if missing.
+# Inline the config generation (cat heredoc) so this never depends on
+# write-default-conf being executable — that script had a /sbin/sh shebang
+# that KSU doesn't provide. The external script is still used when available
+# (it may include newer defaults), with the inline as a guaranteed fallback.
 # ---------------------------------------------------------------------------
+_write_default_conf() {
+    dest="$1"
+    conf_dir="$(dirname "$dest")"
+    mkdir -p "$conf_dir" || return 1
+    cat > "$dest" << CONF
+# imgdrive configuration
+# Edit IMAGE_REAL, KEYFILE, then run: imgdrive-ctl mount
+
+IMAGE_REAL="/mnt/media_rw/<sdcard_id>/drive.img"
+IMAGE_USB="/storage/emulated/0/ext/sdcard/drive.img"
+KEYFILE="${conf_dir}/imgdrive.key"
+NAME="drive"
+REAL_MOUNT="/mnt/media_rw/drive"
+USER_VIEW="/data/media/0/drive"
+PUBLIC_VIEW="/storage/emulated/0/drive"
+BIND_UID=1023
+BIND_GID=1023
+BIND_PERMS=0770
+AUTO_MOUNT=1
+CRYPTSETUP_BIN="/data/data/com.termux/files/usr/bin/cryptsetup"
+LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
+BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"
+NSENTER_BIN="/data/data/com.termux/files/usr/bin/nsenter"
+ISODRIVE_BIN="/system/bin/isodrive"
+CONF
+}
+
 _repopulate_conf() {
     conf="$1"
+    # Prefer the external script (may have richer defaults); fall back to inline.
     if [ -x "$WRITE_CONF" ]; then
-        "$WRITE_CONF" "$conf" && \
-            _log "Default config written: $conf" || \
-            _log "Failed to write default config: $conf"
+        "$WRITE_CONF" "$conf" 2>/dev/null && \
+            { _log "Default config written via write-default-conf: $conf"; return 0; }
+        _log "write-default-conf failed (exit $?) — using inline fallback"
     else
-        _log "write-default-conf not found at $WRITE_CONF"
+        _log "write-default-conf not executable at $WRITE_CONF — using inline fallback"
     fi
+    _write_default_conf "$conf" && \
+        _log "Default config written (inline): $conf" || \
+        _log "ERROR: inline config write also failed for $conf"
 }
 
 if [ ! -f "$PRIMARY_CONF" ]; then
@@ -82,7 +128,7 @@ fi
 (
     while true; do
         sleep 30
-        mountpoint -q /sdcard || continue
+        ls /sdcard/ >/dev/null 2>&1 || continue
         [ ! -f "$PRIMARY_CONF" ] || continue
         _log "Primary config missing — repopulating"
         _repopulate_conf "$PRIMARY_CONF"
