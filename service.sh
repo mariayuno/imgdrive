@@ -30,7 +30,7 @@ done
 # Poll up to 60 seconds.
 # ---------------------------------------------------------------------------
 i=0
-while [ ! -d /sdcard/Documents ] && [ "$i" -lt 60 ]; do
+while ! mountpoint -q /sdcard && [ "$i" -lt 60 ]; do
     sleep 1; i=$((i+1))
 done
 
