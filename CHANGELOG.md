@@ -1,3 +1,10 @@
+## v2.1
+
+- Add GitHub Actions workflow for automated releases (36a71e9)
+- fix: /sbin/sh shebang breaks on KSU; mountpoint -q fails on symlinked /sdcard (22ef32f)
+- chore: exclude workflow files (no workflow scope on token) (cf8de08)
+- feat: multi-drive support, key management WebUI, -c flag for ctl/status (4035b34)
+
 ## v2.0
 
 - Refactor GitHub Actions workflow for release process (0d573ff)
