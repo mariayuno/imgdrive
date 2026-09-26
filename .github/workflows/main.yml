@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version in module.prop
+        id: bump
+        run: |
+          set -e
+
+          PROP="module.prop"
+
+          OLD_CODE=$(grep '^versionCode=' "$PROP" | cut -d= -f2)
+          NEW_CODE=$(( OLD_CODE + 1 ))
+
+          MAJOR=$(grep '^version=' "$PROP" | sed 's/^version=v\([0-9]*\)\..*/\1/')
+          NEW_VER="v${MAJOR}.${NEW_CODE}"
+
+          sed -i "s/^version=.*/version=${NEW_VER}/"         "$PROP"
+          sed -i "s/^versionCode=.*/versionCode=${NEW_CODE}/" "$PROP"
+
+          echo "version=${NEW_VER}"       >> "$GITHUB_OUTPUT"
+          echo "version_code=${NEW_CODE}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          RELEASE_TAG="${VERSION}"
+          RELEASE_NAME="imgdrive ${VERSION}"
+          ARTIFACT_NAME="imgdrive-${VERSION}.zip"
+
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "artifact=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build flashable zip
+        id: build
+        run: |
+          set -e
+
+          VERSION="${{ steps.bump.outputs.version }}"
+          ZIP="${{ steps.meta.outputs.artifact }}"
+
+          zip -q -r "$ZIP" . \
+            --exclude "*.git/*" \
+            --exclude ".github/*" \
+            --exclude "*.DS_Store" \
+            --exclude "*.swp" \
+            --exclude "*.bak"
+
+          zip -q "$ZIP" README.md LICENSE
+
+          SHA256=$(sha256sum "$ZIP" | cut -d' ' -f1)
+
+          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Update update.json
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          VERSION_CODE="${{ steps.bump.outputs.version_code }}"
+          ARTIFACT="${{ steps.meta.outputs.artifact }}"
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ARTIFACT}"
+
+          cat > update.json <<EOF
+          {
+              "version": "${VERSION}",
+              "versionCode": ${VERSION_CODE},
+              "zipUrl": "${ZIP_URL}",
+              "changelog": "https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md"
+          }
+          EOF
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add module.prop update.json
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          set -e
+
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="${LAST_TAG}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          LOG=$(git log "$RANGE" \
+            --pretty=format:"- %s (%h)" \
+            --no-merges \
+            | grep -v '^\- chore: bump version' || true)
+
+          [ -z "$LOG" ] && LOG="- Minor update"
+
+          {
+            echo "## What's changed"
+            echo ""
+            echo "$LOG"
+            echo ""
+            echo "## Checksums"
+            echo '```'
+            echo "SHA256  ${{ steps.build.outputs.sha256 }}  ${{ steps.meta.outputs.artifact }}"
+            echo '```'
+            echo 'Enjoy !!!'
+          } > release_notes.md
+
+          echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
+
+          # Prepend to CHANGELOG.md so the URL in update.json stays current
+          VERSION="${{ steps.bump.outputs.version }}"
+          NEW_ENTRY="## ${VERSION}"$'\n\n'"${LOG}"$'\n'
+          if [ -f CHANGELOG.md ]; then
+            echo -e "${NEW_ENTRY}\n$(cat CHANGELOG.md)" > CHANGELOG.md
+          else
+            echo "$NEW_ENTRY" > CHANGELOG.md
+          fi
+          git add CHANGELOG.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body_path: ${{ steps.changelog.outputs.notes_file }}
+          files: ${{ steps.build.outputs.zip }}
+          draft: false
+          prerelease: false
