@@ -664,6 +664,14 @@ cmd_sync() { usb_connected && start_stage2 || start_stage1; }
 # setup — provision a new encrypted drive
 # ---------------------------------------------------------------------------
 cmd_setup() {
+    SETUP_LOCK="/data/adb/imgdrive/setup.lock"
+    if [ -f "$SETUP_LOCK" ]; then
+        die "Setup already running (lock: $SETUP_LOCK). If stale, remove it manually."
+    fi
+    touch "$SETUP_LOCK" || die "Cannot create lock file: $SETUP_LOCK"
+    trap 'rm -f "$SETUP_LOCK"' EXIT INT TERM
+
+
     size="$SETUP_SIZE"
     # Validate size format: number + optional G/M suffix
     case "$size" in

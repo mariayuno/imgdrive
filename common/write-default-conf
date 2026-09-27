@@ -41,5 +41,23 @@ CONF
 
 # If called directly (not sourced), write to the path given as $1.
 case "$0" in
-    *write-default-conf) _write_conf "${1:-/sdcard/Documents/imgdrive/imgdrive.conf}" ;;
+    *write-default-conf)
+        FORCE=0; DEST=""
+        for _a in "$@"; do
+            case "$_a" in
+                --force|-f) FORCE=1 ;;
+                *) DEST="$_a" ;;
+            esac
+        done
+        DEST="${DEST:-/sdcard/Documents/imgdrive/imgdrive.conf}"
+        if [ -f "$DEST" ] && [ "$FORCE" -eq 0 ]; then
+            printf 'imgdrive: config already exists: %s\nUse --force to overwrite (a .bak copy will be made).\n' "$DEST" >&2
+            exit 1
+        fi
+        if [ -f "$DEST" ] && [ "$FORCE" -eq 1 ]; then
+            cp "$DEST" "${DEST}.bak" 2>/dev/null && \
+                printf 'imgdrive: backed up existing config to %s.bak\n' "$DEST" >&2
+        fi
+        _write_conf "$DEST"
+        ;;
 esac
