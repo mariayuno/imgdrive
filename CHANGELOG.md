@@ -1,3 +1,7 @@
+## v3.2
+
+- refactor+perf: delegate setupStorage to CLI, periodic deep refresh (1f550c3)
+
 ## v3.1
 
 - perf+safety: fast polling, op locks, no-overwrite config, setup lock (f59c276)
