@@ -82,7 +82,7 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 
 ---
 
-<!-- BEGIN GENERATED INSTALL -->
+<!-- INSTALL_ONELINER_START -->
 
 ### Latest Release
 
@@ -106,7 +106,7 @@ ksud module install /sdcard/Download/imgdrive-v2.6.zip
 
 Flash `imgdrive-v2.6.zip` from the Magisk app.
 
-<!-- END GENERATED INSTALL -->
+<!-- INSTALL_ONELINER_END -->
 
 ## Configuration
 
