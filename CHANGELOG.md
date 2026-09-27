@@ -1,3 +1,9 @@
+## v2.2
+
+- Create main.yml (0079d31)
+- chore: exclude workflows (no workflow scope) (05a95a5)
+- fix+debug: /sdcard write probe, verbose stage logging (95c63c0)
+
 ## v2.1
 
 - Add GitHub Actions workflow for automated releases (36a71e9)
