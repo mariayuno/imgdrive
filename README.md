@@ -82,6 +82,8 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 
 ---
 
+## Installation
+
 <!-- INSTALL_ONELINER_START -->
 <table>
 <tr>
