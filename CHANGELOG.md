@@ -1,3 +1,9 @@
+## v2.6
+
+- Update README with installation and configuration info (90e8928)
+- Fix README markers and update version checks (150e176)
+- Enhance version bumping and README generation (67715cc)
+
 ## v2.5
 
 - fix: remove duplicate closing brace in _log_tail() (b21eb8f)

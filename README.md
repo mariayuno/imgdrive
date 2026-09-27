@@ -82,34 +82,27 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 
 <!-- BEGIN GENERATED INSTALL -->
 
-## Installation
+### Latest Release
 
-<!-- INSTALL_ONELINER_START -->
-### One-liner (recommended)
+**Version:** `v2.6`
 
-> Version shown below is updated automatically each release.
+**Version code:** `17`
 
-**KernelSU / APatch**
-```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && /data/adb/ksud module install /tmp/imgdrive.zip
+**Package:** `imgdrive-v2.6.zip`
+
+#### Download
+
+[Download imgdrive-v2.6.zip](https://github.com/rexackermann/imgdrive/releases/download/v2.6/imgdrive-v2.6.zip)
+
+#### Install with KernelSU
+
+```bash
+ksud module install /sdcard/Download/imgdrive-v2.6.zip
 ```
 
-**Magisk**
-```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && magisk --install-module /tmp/imgdrive.zip
-```
+#### Install with Magisk
 
-**APatch**
-```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && /data/adb/apd module install /tmp/imgdrive.zip
-```
-<!-- INSTALL_ONELINER_END -->
-
-### Manual
-1. Download the zip from [Releases](https://github.com/rexackermann/imgdrive/releases/latest).
-2. Flash via Magisk / KernelSU / APatch app.
-
----
+Flash `imgdrive-v2.6.zip` from the Magisk app.
 
 <!-- END GENERATED INSTALL -->
 
