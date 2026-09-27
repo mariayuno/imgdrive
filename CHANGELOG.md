@@ -1,3 +1,7 @@
+## v3.1
+
+- perf+safety: fast polling, op locks, no-overwrite config, setup lock (f59c276)
+
 ## v3.0
 
 - Refactor imgdrive-status script for clarity (4606166)
