@@ -6,10 +6,12 @@
 CONF_FILE="/sdcard/Documents/imgdrive/imgdrive.conf"
 
 # Pre-parse -c/--conf before sourcing
+FAST=0
 _take=0
 for _a in "$@"; do
     if [ "$_take" -eq 1 ]; then CONF_FILE="$_a"; _take=0; continue; fi
     case "$_a" in
+        --fast)        FAST=1 ;;
         -c|--conf)     _take=1 ;;
         -c=*|--conf=*) CONF_FILE="${_a#*=}" ;;
     esac
@@ -127,10 +129,14 @@ img_real=0; [ -f "$IMAGE_REAL" ]  && img_real=1
 img_usb=0;  [ -f "$IMAGE_USB" ]   && img_usb=1
 
 iso_image="$(_isodrive_file)"
-loop="$(_find_loop 2>/dev/null)"
-img_size="$(_image_size "$IMAGE_REAL")"
-luks_slots="$(_luks_slot_count)"
-log="$(_log_tail)"
+if [ "$FAST" -eq 0 ]; then
+    loop="$(_find_loop 2>/dev/null)"
+    img_size="$(_image_size "$IMAGE_REAL")"
+    luks_slots="$(_luks_slot_count)"
+    log="$(_log_tail)"
+else
+    loop=""; img_size=""; luks_slots="-1"; log=""
+fi
 
 if   [ "$iso" -eq 0 ] && [ "$mapper" -eq 1 ] && [ "$f2fs" -eq 1 ] && [ "$bindfs" -eq 1 ]; then state="STAGE1"
 elif [ "$iso" -eq 1 ] && [ "$mapper" -eq 0 ] && [ "$f2fs" -eq 0 ]; then state="STAGE2"
@@ -149,6 +155,7 @@ printf '"keyfile":%s,'      "$(_bool $keyfile)"
 printf '"img_real":%s,'     "$(_bool $img_real)"
 printf '"img_usb":%s,'      "$(_bool $img_usb)"
 printf '"conf_ok":%s,'      "$(_bool $conf_loaded)"
+printf '"fast":%s,'          "$(_bool $FAST)"
 printf '"luks_slots":%s,'   "$luks_slots"
 printf '"loop":"%s",'       "$(_q "${loop:-none}")"
 printf '"iso_image":"%s",'  "$(_q "${iso_image:-none}")"
