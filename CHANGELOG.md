@@ -1,3 +1,7 @@
+## v3.0
+
+- Refactor imgdrive-status script for clarity (4606166)
+
 ## v2.9
 
 - Update main.yml (ba87cd7)
