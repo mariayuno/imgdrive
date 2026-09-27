@@ -82,13 +82,30 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 
 ## Installation
 
-1. Flash the zip via Magisk / KernelSU / APatch.
-2. **Before rebooting**, edit the config at:
-   ```
-   /sdcard/Documents/imgdrive/imgdrive.conf
-   ```
-3. Fill in at minimum: `IMAGE_REAL`, `IMAGE_USB`, `KEYFILE`, `NAME`, `REAL_MOUNT`, `USER_VIEW`, `PUBLIC_VIEW`.
-4. Reboot. The module will wait for your keyfile to become readable and then auto-mount.
+<!-- INSTALL_ONELINER_START -->
+### One-liner (recommended)
+
+> Version shown below is updated automatically each release.
+
+**KernelSU / APatch**
+```sh
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && /data/adb/ksud module install /tmp/imgdrive.zip
+```
+
+**Magisk**
+```sh
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && magisk --install-module /tmp/imgdrive.zip
+```
+
+**APatch**
+```sh
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && /data/adb/apd module install /tmp/imgdrive.zip
+```
+<!-- INSTALL_ONELINER_END -->
+
+### Manual
+1. Download the zip from [Releases](https://github.com/rexackermann/imgdrive/releases/latest).
+2. Flash via Magisk / KernelSU / APatch app.
 
 ---
 
