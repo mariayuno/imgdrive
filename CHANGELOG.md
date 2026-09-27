@@ -1,3 +1,18 @@
+## v2.4
+
+- docs: versioned one-liner URLs, auto-updated by release workflow (89999dd)
+- docs: add one-liner install commands with auto-update markers (e9c6d2f)
+
+## v2.3
+
+- fix: JSON log escaping, no-placeholder defaults, CLI for keys/setup/drives (c6ef348)
+
+## v2.2
+
+- Create main.yml (0079d31)
+- chore: exclude workflows (no workflow scope) (05a95a5)
+- fix+debug: /sdcard write probe, verbose stage logging (95c63c0)
+
 ## v2.1
 
 - Add GitHub Actions workflow for automated releases (36a71e9)
