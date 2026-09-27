@@ -16,9 +16,9 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Android-3ddc84?logo=android&logoColor=white">
   <img alt="Root" src="https://img.shields.io/badge/root-Magisk%20%7C%20KernelSU%20%7C%20APatch-black">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue">
-  <img alt="Version" src="https://img.shields.io/badge/version-v1.0-orange">
-</p>
-
+  <!-- VERSION_BADGE_START -->
+  <img alt="Version" src="https://img.shields.io/badge/version-v1.0-7c3aed?style=for-the-badge&logo=github&logoColor=white">
+  <!-- VERSION_BADGE_END --></p>
 ---
 
 ## What is imgdrive?
