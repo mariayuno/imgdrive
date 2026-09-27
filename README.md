@@ -85,19 +85,21 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 <!-- INSTALL_ONELINER_START -->
 ### One-liner (recommended)
 
+> Version shown below is updated automatically each release.
+
 **KernelSU / APatch**
 ```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/latest/download/imgdrive-latest.zip && /data/adb/ksud module install /tmp/imgdrive.zip
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && /data/adb/ksud module install /tmp/imgdrive.zip
 ```
 
 **Magisk**
 ```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/latest/download/imgdrive-latest.zip && magisk --install-module /tmp/imgdrive.zip
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && magisk --install-module /tmp/imgdrive.zip
 ```
 
-**APatch (alternative)**
+**APatch**
 ```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/latest/download/imgdrive-latest.zip && /data/adb/apd module install /tmp/imgdrive.zip
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.3/imgdrive-v2.3.zip && /data/adb/apd module install /tmp/imgdrive.zip
 ```
 <!-- INSTALL_ONELINER_END -->
 
