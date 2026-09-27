@@ -56,7 +56,7 @@ jobs:
             exit 1
           fi
 
-          # Increment the minor version.
+          # Increment minor version.
           # v1.9 -> v2.0
           if (( MINOR >= 9 )); then
             NEW_MAJOR=$((MAJOR + 1))
@@ -174,15 +174,29 @@ jobs:
 
           echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
 
-      - name: Update README install snippets
+      # ---------------------------------------------------------------
+      # README
+      #
+      # Two generated areas are maintained:
+      #
+      # 1. TOP VERSION BADGE
+      # 2. INSTALLATION BANNER
+      #
+      # Everything outside those markers is left untouched.
+      # ---------------------------------------------------------------
+
+      - name: Update README version banner and install banner
         shell: bash
         run: |
           set -euo pipefail
 
           README="README.md"
 
-          START_MARKER='<!-- BEGIN GENERATED INSTALL -->'
-          END_MARKER='<!-- END GENERATED INSTALL -->'
+          VERSION_START='<!-- VERSION_BADGE_START -->'
+          VERSION_END='<!-- VERSION_BADGE_END -->'
+
+          INSTALL_START='<!-- INSTALL_ONELINER_START -->'
+          INSTALL_END='<!-- INSTALL_ONELINER_END -->'
 
           VERSION="${{ steps.bump.outputs.version }}"
           VERSION_CODE="${{ steps.bump.outputs.version_code }}"
@@ -190,172 +204,293 @@ jobs:
 
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ARTIFACT}"
 
-          echo "Checking README generated-section markers..."
+          # Badge colors.
+          #
+          # Purple is used for the project version.
+          # Blue is used for the package/download information.
+          #
+          VERSION_COLOR="7c3aed"
+          PACKAGE_COLOR="2563eb"
+          CODE_COLOR="0891b2"
 
           if [[ ! -f "$README" ]]; then
             echo "ERROR: $README not found."
             exit 1
           fi
 
-          START_COUNT=$(grep -Fxc "$START_MARKER" "$README" || true)
-          END_COUNT=$(grep -Fxc "$END_MARKER" "$README" || true)
+          echo "Checking README markers..."
 
-          if (( START_COUNT != 1 )); then
+          # -------------------------------------------------------------
+          # Validate VERSION markers
+          # -------------------------------------------------------------
+
+          VERSION_START_COUNT=$(grep -Fxc "$VERSION_START" "$README" || true)
+          VERSION_END_COUNT=$(grep -Fxc "$VERSION_END" "$README" || true)
+
+          if (( VERSION_START_COUNT != 1 )); then
             echo "ERROR: Expected exactly one:"
-            printf '  %s\n' "$START_MARKER"
-            echo "Found: $START_COUNT"
-            echo
-            echo "Add this exact line to README.md:"
-            printf '%s\n' "$START_MARKER"
+            printf '  %s\n' "$VERSION_START"
+            echo "Found: $VERSION_START_COUNT"
             exit 1
           fi
 
-          if (( END_COUNT != 1 )); then
+          if (( VERSION_END_COUNT != 1 )); then
             echo "ERROR: Expected exactly one:"
-            printf '  %s\n' "$END_MARKER"
-            echo "Found: $END_COUNT"
-            echo
-            echo "Add this exact line to README.md:"
-            printf '%s\n' "$END_MARKER"
+            printf '  %s\n' "$VERSION_END"
+            echo "Found: $VERSION_END_COUNT"
             exit 1
           fi
 
-          START_LINE=$(grep -n -F "$START_MARKER" "$README" | cut -d: -f1)
-          END_LINE=$(grep -n -F "$END_MARKER" "$README" | cut -d: -f1)
+          VERSION_START_LINE=$(grep -n -F "$VERSION_START" "$README" | cut -d: -f1)
+          VERSION_END_LINE=$(grep -n -F "$VERSION_END" "$README" | cut -d: -f1)
 
-          if (( START_LINE >= END_LINE )); then
-            echo "ERROR: README generated-section markers are in the wrong order."
-            echo "START line: $START_LINE"
-            echo "END line:   $END_LINE"
+          if (( VERSION_START_LINE >= VERSION_END_LINE )); then
+            echo "ERROR: Version badge markers are in the wrong order."
             exit 1
           fi
 
-          echo "README markers OK:"
-          echo "  START: line $START_LINE"
-          echo "  END:   line $END_LINE"
+          # -------------------------------------------------------------
+          # Validate INSTALL markers
+          # -------------------------------------------------------------
+
+          INSTALL_START_COUNT=$(grep -Fxc "$INSTALL_START" "$README" || true)
+          INSTALL_END_COUNT=$(grep -Fxc "$INSTALL_END" "$README" || true)
+
+          if (( INSTALL_START_COUNT != 1 )); then
+            echo "ERROR: Expected exactly one:"
+            printf '  %s\n' "$INSTALL_START"
+            echo "Found: $INSTALL_START_COUNT"
+            exit 1
+          fi
+
+          if (( INSTALL_END_COUNT != 1 )); then
+            echo "ERROR: Expected exactly one:"
+            printf '  %s\n' "$INSTALL_END"
+            echo "Found: $INSTALL_END_COUNT"
+            exit 1
+          fi
+
+          INSTALL_START_LINE=$(grep -n -F "$INSTALL_START" "$README" | cut -d: -f1)
+          INSTALL_END_LINE=$(grep -n -F "$INSTALL_END" "$README" | cut -d: -f1)
+
+          if (( INSTALL_START_LINE >= INSTALL_END_LINE )); then
+            echo "ERROR: Installation markers are in the wrong order."
+            exit 1
+          fi
+
+          echo "README markers OK."
+          echo "  Version:      ${VERSION_START_LINE}-${VERSION_END_LINE}"
+          echo "  Installation: ${INSTALL_START_LINE}-${INSTALL_END_LINE}"
+
+          # -------------------------------------------------------------
+          # Generate README
+          # -------------------------------------------------------------
 
           TMP_README="${README}.tmp"
 
           awk \
-            -v start="$START_MARKER" \
-            -v end="$END_MARKER" \
+            -v version_start="$VERSION_START" \
+            -v version_end="$VERSION_END" \
+            -v install_start="$INSTALL_START" \
+            -v install_end="$INSTALL_END" \
             -v version="$VERSION" \
             -v version_code="$VERSION_CODE" \
             -v artifact="$ARTIFACT" \
             -v release_url="$RELEASE_URL" \
+            -v version_color="$VERSION_COLOR" \
+            -v package_color="$PACKAGE_COLOR" \
+            -v code_color="$CODE_COLOR" \
             '
-            $0 == start {
+            # -----------------------------------------------------------
+            # Top version badge
+            # -----------------------------------------------------------
+
+            $0 == version_start {
               print
+              print "<img alt=\"Version\" src=\"https://img.shields.io/badge/version-" version "-" version_color "?style=for-the-badge&logo=github&logoColor=white\">"
+              print version_end
+              in_version=1
+              next
+            }
+
+            $0 == version_end {
+              if (in_version) {
+                in_version=0
+                next
+              }
+            }
+
+            # -----------------------------------------------------------
+            # Installation banner
+            # -----------------------------------------------------------
+
+            $0 == install_start {
+              print
+              print "<table>"
+              print "<tr>"
+              print "<td valign=\"top\" width=\"70%\">"
               print ""
-              print "### Latest Release"
+              print "### One-liner (recommended)"
               print ""
-              print "**Version:** `" version "`"
+              print "> Downloads the current release and installs it directly."
               print ""
-              print "**Version code:** `" version_code "`"
+              print "**KernelSU / APatch**"
               print ""
-              print "**Package:** `" artifact "`"
-              print ""
-              print "#### Download"
-              print ""
-              print "[Download " artifact "](" release_url ")"
-              print ""
-              print "#### Install with KernelSU"
-              print ""
-              print "```bash"
-              print "ksud module install /sdcard/Download/" artifact
+              print "```sh"
+              print "curl -Lo /tmp/imgdrive.zip " release_url " && /data/adb/ksud module install /tmp/imgdrive.zip"
               print "```"
               print ""
-              print "#### Install with Magisk"
+              print "**Magisk**"
               print ""
-              print "Flash `" artifact "` from the Magisk app."
+              print "```sh"
+              print "curl -Lo /tmp/imgdrive.zip " release_url " && magisk --install-module /tmp/imgdrive.zip"
+              print "```"
               print ""
-              in_generated=1
+              print "**APatch**"
+              print ""
+              print "```sh"
+              print "curl -Lo /tmp/imgdrive.zip " release_url " && /data/adb/apd module install /tmp/imgdrive.zip"
+              print "```"
+              print ""
+              print "</td>"
+              print "<td valign=\"top\" align=\"right\" width=\"30%\">"
+              print ""
+              print "<p align=\"right\">"
+              print "<img alt=\"Version\" src=\"https://img.shields.io/badge/" version "-" version_color "?style=for-the-badge&logo=github&logoColor=white\"><br>"
+              print "<img alt=\"Package\" src=\"https://img.shields.io/badge/package-" artifact "-" package_color "?style=for-the-badge&logo=files&logoColor=white\"><br>"
+              print "<img alt=\"Version Code\" src=\"https://img.shields.io/badge/version%20code-" version_code "-" code_color "?style=for-the-badge\">"
+              print "</p>"
+              print ""
+              print "</td>"
+              print "</tr>"
+              print "</table>"
+              print ""
+              in_install=1
               next
             }
 
-            $0 == end {
-              in_generated=0
-              print
-              next
+            $0 == install_end {
+              if (in_install) {
+                in_install=0
+                print
+                next
+              }
             }
 
-            !in_generated {
+            # -----------------------------------------------------------
+            # Preserve everything outside generated sections.
+            # -----------------------------------------------------------
+
+            !in_version && !in_install {
               print
             }
             ' "$README" > "$TMP_README"
 
           mv "$TMP_README" "$README"
 
-          echo "README generated section updated."
+          echo "README updated successfully."
 
-      - name: Verify generated README
+      - name: Verify README generated content
         shell: bash
         run: |
           set -euo pipefail
 
           README="README.md"
 
-          START_MARKER='<!-- BEGIN GENERATED INSTALL -->'
-          END_MARKER='<!-- END GENERATED INSTALL -->'
+          VERSION_START='<!-- VERSION_BADGE_START -->'
+          VERSION_END='<!-- VERSION_BADGE_END -->'
+
+          INSTALL_START='<!-- INSTALL_ONELINER_START -->'
+          INSTALL_END='<!-- INSTALL_ONELINER_END -->'
 
           VERSION="${{ steps.bump.outputs.version }}"
           VERSION_CODE="${{ steps.bump.outputs.version_code }}"
           ARTIFACT="${{ steps.meta.outputs.artifact }}"
 
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ARTIFACT}"
+
           echo "Verifying README..."
 
-          START_COUNT=$(grep -Fxc "$START_MARKER" "$README" || true)
-          END_COUNT=$(grep -Fxc "$END_MARKER" "$README" || true)
+          # -------------------------------------------------------------
+          # Marker counts
+          # -------------------------------------------------------------
 
-          if (( START_COUNT != 1 )); then
-            echo "ERROR: README must contain exactly one START marker."
+          [[ "$(grep -Fxc "$VERSION_START" "$README" || true)" == "1" ]] \
+            || { echo "ERROR: Invalid version start marker."; exit 1; }
+
+          [[ "$(grep -Fxc "$VERSION_END" "$README" || true)" == "1" ]] \
+            || { echo "ERROR: Invalid version end marker."; exit 1; }
+
+          [[ "$(grep -Fxc "$INSTALL_START" "$README" || true)" == "1" ]] \
+            || { echo "ERROR: Invalid install start marker."; exit 1; }
+
+          [[ "$(grep -Fxc "$INSTALL_END" "$README" || true)" == "1" ]] \
+            || { echo "ERROR: Invalid install end marker."; exit 1; }
+
+          # -------------------------------------------------------------
+          # Version banner
+          # -------------------------------------------------------------
+
+          VERSION_START_LINE=$(grep -n -F "$VERSION_START" "$README" | cut -d: -f1)
+          VERSION_END_LINE=$(grep -n -F "$VERSION_END" "$README" | cut -d: -f1)
+
+          VERSION_SECTION=$(sed -n "${VERSION_START_LINE},${VERSION_END_LINE}p" "$README")
+
+          if ! grep -Fq "version-${VERSION}" <<< "$VERSION_SECTION"; then
+            echo "ERROR: Top version badge is stale."
+            echo "Expected version: $VERSION"
             exit 1
           fi
 
-          if (( END_COUNT != 1 )); then
-            echo "ERROR: README must contain exactly one END marker."
+          # -------------------------------------------------------------
+          # Installation banner
+          # -------------------------------------------------------------
+
+          INSTALL_START_LINE=$(grep -n -F "$INSTALL_START" "$README" | cut -d: -f1)
+          INSTALL_END_LINE=$(grep -n -F "$INSTALL_END" "$README" | cut -d: -f1)
+
+          INSTALL_SECTION=$(sed -n "${INSTALL_START_LINE},${INSTALL_END_LINE}p" "$README")
+
+          if ! grep -Fq "$RELEASE_URL" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: Installation URL is stale."
+            echo "Expected:"
+            echo "$RELEASE_URL"
             exit 1
           fi
 
-          START_LINE=$(grep -n -F "$START_MARKER" "$README" | cut -d: -f1)
-          END_LINE=$(grep -n -F "$END_MARKER" "$README" | cut -d: -f1)
-
-          if (( START_LINE >= END_LINE )); then
-            echo "ERROR: README markers are malformed."
+          if ! grep -Fq "curl -Lo /tmp/imgdrive.zip" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: curl installer is missing."
             exit 1
           fi
 
-          SECTION=$(sed -n "${START_LINE},${END_LINE}p" "$README")
-
-          if ! grep -Fq "**Version:** \`${VERSION}\`" <<< "$SECTION"; then
-            echo "ERROR: README does not contain expected version: $VERSION"
+          if ! grep -Fq "/data/adb/ksud module install /tmp/imgdrive.zip" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: KernelSU installer is missing."
             exit 1
           fi
 
-          if ! grep -Fq "**Version code:** \`${VERSION_CODE}\`" <<< "$SECTION"; then
-            echo "ERROR: README does not contain expected versionCode: $VERSION_CODE"
+          if ! grep -Fq "magisk --install-module /tmp/imgdrive.zip" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: Magisk installer is missing."
             exit 1
           fi
 
-          if ! grep -Fq "**Package:** \`${ARTIFACT}\`" <<< "$SECTION"; then
-            echo "ERROR: README does not contain expected artifact: $ARTIFACT"
+          if ! grep -Fq "/data/adb/apd module install /tmp/imgdrive.zip" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: APatch installer is missing."
             exit 1
           fi
 
-          if ! grep -Fq "ksud module install /sdcard/Download/${ARTIFACT}" <<< "$SECTION"; then
-            echo "ERROR: README KernelSU install command is stale or missing."
+          if ! grep -Fq "$ARTIFACT" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: README does not contain expected package name:"
+            echo "$ARTIFACT"
             exit 1
           fi
 
-          if ! grep -Fq "$ARTIFACT" <<< "$SECTION"; then
-            echo "ERROR: README generated section does not reference $ARTIFACT"
+          if ! grep -Fq "$VERSION_CODE" <<< "$INSTALL_SECTION"; then
+            echo "ERROR: README does not contain expected version code:"
+            echo "$VERSION_CODE"
             exit 1
           fi
 
           echo "README verification passed."
-          echo
-          echo "Generated section:"
-          sed -n "${START_LINE},${END_LINE}p" "$README"
 
       - name: Build flashable zip
         id: build
@@ -396,7 +531,10 @@ jobs:
 
           echo "Running final consistency checks..."
 
+          # -------------------------------------------------------------
           # module.prop
+          # -------------------------------------------------------------
+
           ACTUAL_VERSION=$(grep '^version=' module.prop | cut -d= -f2)
           ACTUAL_VERSION_CODE=$(grep '^versionCode=' module.prop | cut -d= -f2)
 
@@ -414,7 +552,10 @@ jobs:
             exit 1
           fi
 
+          # -------------------------------------------------------------
           # update.json
+          # -------------------------------------------------------------
+
           if ! grep -Fq "\"version\": \"${VERSION}\"" update.json; then
             echo "ERROR: update.json version mismatch."
             exit 1
@@ -425,17 +566,27 @@ jobs:
             exit 1
           fi
 
+          # -------------------------------------------------------------
           # Artifact
+          # -------------------------------------------------------------
+
           if [[ ! -f "$ARTIFACT" ]]; then
             echo "ERROR: Expected release artifact does not exist:"
-            echo "  $ARTIFACT"
+            echo "$ARTIFACT"
             exit 1
           fi
 
+          # -------------------------------------------------------------
           # README
+          # -------------------------------------------------------------
+
+          if ! grep -Fq "$VERSION" README.md; then
+            echo "ERROR: README does not reference current version."
+            exit 1
+          fi
+
           if ! grep -Fq "$ARTIFACT" README.md; then
-            echo "ERROR: README does not reference release artifact:"
-            echo "  $ARTIFACT"
+            echo "ERROR: README does not reference current artifact."
             exit 1
           fi
 
@@ -449,7 +600,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add module.prop update.json CHANGELOG.md README.md
+          git add \
+            module.prop \
+            update.json \
+            CHANGELOG.md \
+            README.md
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
