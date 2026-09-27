@@ -17,8 +17,9 @@
   <img alt="Root" src="https://img.shields.io/badge/root-Magisk%20%7C%20KernelSU%20%7C%20APatch-black">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue">
   <!-- VERSION_BADGE_START -->
-  <img alt="Version" src="https://img.shields.io/badge/version-v1.0-7c3aed?style=flat-square&logo=github&logoColor=white">
+  <img alt="Version" src="https://img.shields.io/badge/version-v2.6-7c3aed?style=flat-square&logo=github&logoColor=white">
   <!-- VERSION_BADGE_END -->
+</p>
 
 ---
 
