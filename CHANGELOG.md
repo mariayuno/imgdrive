@@ -1,3 +1,7 @@
+## v2.8
+
+- Add Installation section to README (5b23695)
+
 ## v2.7
 
 - Update README with installation instructions for v2.6 (003f146)
