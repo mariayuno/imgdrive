@@ -1,3 +1,7 @@
+## v2.3
+
+- fix: JSON log escaping, no-placeholder defaults, CLI for keys/setup/drives (c6ef348)
+
 ## v2.2
 
 - Create main.yml (0079d31)
