@@ -80,6 +80,8 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 
 ---
 
+<!-- BEGIN GENERATED INSTALL -->
+
 ## Installation
 
 <!-- INSTALL_ONELINER_START -->
@@ -108,6 +110,8 @@ curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/dow
 2. Flash via Magisk / KernelSU / APatch app.
 
 ---
+
+<!-- END GENERATED INSTALL -->
 
 ## Configuration
 
