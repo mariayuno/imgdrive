@@ -93,18 +93,57 @@ while [ $# -gt 0 ]; do
         -c|--conf)    shift ;;          # already consumed by _preparse
         -c=*|--conf=*) ;;               # already consumed by _preparse
         mount|usb|toggle|sync|status|off) COMMAND="$1" ;;
+        setup)
+            COMMAND="setup"; shift; SETUP_SIZE="$1"
+            [ -n "$SETUP_SIZE" ] || die "Usage: imgdrive-ctl setup <size>  e.g. 10G or 500M"
+            ;;
+        keys)
+            COMMAND="keys"; shift; KEYS_CMD="${1:-}"
+            case "$KEYS_CMD" in
+                list)     shift ;;
+                add-pass) shift ;;
+                add-key)  shift; KEYS_ARG="${1:-}"; [ -n "$KEYS_ARG" ] || die "keys add-key: missing <keyfile-path>"; shift ;;
+                remove)   shift; KEYS_ARG="${1:-}"; [ -n "$KEYS_ARG" ] || die "keys remove: missing <slot-number>"; shift ;;
+                *) die "Usage: imgdrive-ctl keys <list|add-pass|add-key <path>|remove <slot>>" ;;
+            esac ;;
+        drives)
+            COMMAND="drives"; shift; DRIVES_CMD="${1:-}"
+            case "$DRIVES_CMD" in
+                list)   shift ;;
+                add)    shift; DRIVES_ARG="${1:-}"; [ -n "$DRIVES_ARG" ] || die "drives add: missing <name>"; shift ;;
+                remove) shift; DRIVES_ARG="${1:-}"; [ -n "$DRIVES_ARG" ] || die "drives remove: missing <name>"; shift ;;
+                *) die "Usage: imgdrive-ctl drives <list|add <name>|remove <name>>" ;;
+            esac ;;
         -h|--help)
             cat <<'USAGE'
-Usage: imgdrive-ctl [-v|--verbose] [-q|--quiet] [-c <conf>] [mount|usb|toggle|sync|status|off]
+Usage: imgdrive-ctl [-v] [-q] [-c <conf>] <command>
 
-  -c <conf>  Path to config file (default: /sdcard/Documents/imgdrive/imgdrive.conf)
+Mount commands:
+  mount           Ensure Stage 1 (local decrypted filesystem)
+  usb             Ensure Stage 2 (USB raw image export)
+  toggle          Toggle Stage 1 <-> Stage 2
+  sync            USB connected => Stage 2, else Stage 1
+  status          Show current state (read-only)
+  off             Tear everything down
 
-  mount   Ensure Stage 1 (local decrypted filesystem)
-  usb     Ensure Stage 2 (raw image exported over USB)
-  toggle  Toggle Stage 1 <-> Stage 2
-  sync    USB connected => Stage 2, otherwise Stage 1
-  status  Inspect current state (no writes)
-  off     Tear down everything
+Provisioning:
+  setup <size>    Create encrypted drive  (e.g. 10G, 500M)
+
+LUKS key management:
+  keys list       Show active key slots (warns if only 1)
+  keys add-pass   Add a passphrase slot (reads from stdin)
+  keys add-key <path>   Add a keyfile slot (generates file if absent)
+  keys remove <slot>    Remove a slot by number
+
+Multi-drive:
+  drives list     List all drive configs
+  drives add <name>     Create a new drive config in conf.d/
+  drives remove <name>  Delete a drive config (image untouched)
+
+Options:
+  -c <conf>   Use alternate config file (default: /sdcard/Documents/imgdrive/imgdrive.conf)
+  -v          Verbose output
+  -q          Quiet
 
 No command defaults to toggle.
 USAGE
@@ -621,6 +660,175 @@ cmd_toggle() {
 
 cmd_sync() { usb_connected && start_stage2 || start_stage1; }
 
+# ---------------------------------------------------------------------------
+# setup — provision a new encrypted drive
+# ---------------------------------------------------------------------------
+cmd_setup() {
+    SETUP_LOCK="/data/adb/imgdrive/setup.lock"
+    if [ -f "$SETUP_LOCK" ]; then
+        die "Setup already running (lock: $SETUP_LOCK). If stale, remove it manually."
+    fi
+    touch "$SETUP_LOCK" || die "Cannot create lock file: $SETUP_LOCK"
+    trap 'rm -f "$SETUP_LOCK"' EXIT INT TERM
+
+    size="$SETUP_SIZE"
+    # Validate size format: number + optional G/M suffix
+    case "$size" in
+        [0-9]*[Gg]) unit=G; num="${size%[Gg]}" ;;
+        [0-9]*[Mm]) unit=M; num="${size%[Mm]}" ;;
+        [0-9]*)     unit=G; num="$size" ;;
+        *) die "Invalid size '$size'. Use e.g. 10G or 500M" ;;
+    esac
+    [ "$num" -gt 0 ] 2>/dev/null || die "Size must be a positive number"
+
+    log "===== SETUP: $num${unit}B encrypted drive ====="
+    log "Image  : $IMAGE_REAL"
+    log "Keyfile: $KEYFILE"
+    log "Mapper : $NAME"
+
+    # Step 1: keyfile
+    kf_dir="$(dirname "$KEYFILE")"
+    if [ ! -f "$KEYFILE" ]; then
+        log "Generating keyfile: $KEYFILE"
+        mkdir -p "$kf_dir" || die "Cannot create keyfile dir: $kf_dir"
+        dd if=/dev/urandom of="$KEYFILE" bs=64 count=1 2>/dev/null || die "keyfile generation failed"
+        chmod 600 "$KEYFILE"
+        log "Keyfile created"
+    else
+        log "Keyfile exists — reusing"
+    fi
+
+    # Step 2: allocate image
+    img_dir="$(dirname "$IMAGE_REAL")"
+    mkdir -p "$img_dir" || die "Cannot create image dir: $img_dir"
+    if [ -f "$IMAGE_REAL" ]; then
+        log "Image already exists — skipping allocation (delete it first to reprovision)"
+    else
+        log "Allocating ${num}${unit}B image…"
+        fallocate -l "${num}${unit}" "$IMAGE_REAL" 2>/dev/null || \
+            truncate -s "${num}${unit}" "$IMAGE_REAL" || \
+            die "Image allocation failed"
+        log "Image allocated: $(ls -lh "$IMAGE_REAL" | awk '{print $5}')"
+    fi
+
+    # Step 3: LUKS2 format
+    log "Formatting LUKS2…"
+    "$CRYPTSETUP_BIN" luksFormat \
+        --type luks2 --cipher aes-xts-plain64 --key-size 512 \
+        --hash sha512 --pbkdf argon2id --sector-size 4096 \
+        --batch-mode --key-file "$KEYFILE" \
+        "$IMAGE_REAL" || die "luksFormat failed"
+    log "LUKS2 header written"
+
+    # Step 4: open
+    SETUP_NAME="${NAME}_setup"
+    log "Opening mapper: $SETUP_NAME"
+    "$CRYPTSETUP_BIN" luksOpen "$IMAGE_REAL" "$SETUP_NAME" \
+        --key-file "$KEYFILE" || die "luksOpen failed"
+
+    # Step 5: mkfs.f2fs
+    log "Formatting F2FS…"
+    if ! mkfs.f2fs -f "/dev/mapper/$SETUP_NAME" >/dev/null 2>&1; then
+        "$CRYPTSETUP_BIN" luksClose "$SETUP_NAME" 2>/dev/null || true
+        die "mkfs.f2fs failed — is f2fs-tools installed? (pkg install f2fs-tools)"
+    fi
+    log "F2FS formatted"
+
+    # Step 6: close
+    "$CRYPTSETUP_BIN" luksClose "$SETUP_NAME" || die "luksClose failed"
+    log "===== SETUP COMPLETE — run: imgdrive-ctl mount ====="
+}
+
+# ---------------------------------------------------------------------------
+# keys — LUKS slot management
+# ---------------------------------------------------------------------------
+cmd_keys() {
+    [ -f "$IMAGE_REAL" ] || die "Image not found: $IMAGE_REAL"
+    [ -r "$KEYFILE" ]    || die "Keyfile not readable: $KEYFILE"
+
+    case "$KEYS_CMD" in
+        list)
+            log "===== LUKS KEY SLOTS: $IMAGE_REAL ====="
+            "$CRYPTSETUP_BIN" luksDump "$IMAGE_REAL" 2>&1 | \
+                awk '/^Keyslots:/,0' | grep -E '^\s+[0-9]+:|Priority:|PBKDF:|^\s+Key:'
+            active="$("$CRYPTSETUP_BIN" luksDump "$IMAGE_REAL" 2>/dev/null | \
+                awk '/^Keyslots:/{k=1;next} k && /^\s+[0-9]+:/{n++} END{print n+0}')"
+            log "Active slots: $active"
+            [ "$active" -lt 2 ] && log "WARNING: only 1 slot — add a passphrase backup with: imgdrive-ctl keys add-pass"
+            ;;
+        add-pass)
+            printf 'Enter new passphrase: '
+            stty -echo 2>/dev/null; read -r passphrase; stty echo 2>/dev/null; printf '\n'
+            [ -n "$passphrase" ] || die "Empty passphrase"
+            printf '%s' "$passphrase" | \
+                "$CRYPTSETUP_BIN" luksAddKey --key-file "$KEYFILE" \
+                "$IMAGE_REAL" --new-keyfile-fd 0 || die "luksAddKey failed"
+            log "Passphrase slot added"
+            ;;
+        add-key)
+            newkf="$KEYS_ARG"
+            if [ ! -f "$newkf" ]; then
+                log "Generating new keyfile: $newkf"
+                mkdir -p "$(dirname "$newkf")"
+                dd if=/dev/urandom of="$newkf" bs=64 count=1 2>/dev/null || die "keyfile generation failed"
+                chmod 600 "$newkf"
+                log "New keyfile generated"
+            fi
+            "$CRYPTSETUP_BIN" luksAddKey --key-file "$KEYFILE" \
+                "$IMAGE_REAL" "$newkf" || die "luksAddKey failed"
+            log "Keyfile slot added: $newkf"
+            ;;
+        remove)
+            slot="$KEYS_ARG"
+            printf '%s' "$slot" | grep -qE '^[0-9]+$' || die "Slot must be a number"
+            "$CRYPTSETUP_BIN" luksKillSlot --key-file "$KEYFILE" \
+                "$IMAGE_REAL" "$slot" || die "luksKillSlot failed"
+            log "Slot $slot removed"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# drives — multi-drive config management
+# ---------------------------------------------------------------------------
+CONFD="/sdcard/Documents/imgdrive/conf.d"
+WRITE_CONF_BIN="/data/adb/imgdrive/bin/write-default-conf"
+PRIMARY_CONF_PATH="/sdcard/Documents/imgdrive/imgdrive.conf"
+
+cmd_drives() {
+    case "$DRIVES_CMD" in
+        list)
+            log "===== DRIVES ====="
+            log "primary: $PRIMARY_CONF_PATH"
+            for f in "$CONFD"/*.conf; do
+                [ -f "$f" ] || continue
+                log "  extra: $f"
+            done
+            ;;
+        add)
+            name="$DRIVES_ARG"
+            printf '%s' "$name" | grep -qE '^[a-zA-Z0-9_-]+$' || \
+                die "Drive name must be alphanumeric (a-z, 0-9, _, -)"
+            dest="$CONFD/${name}.conf"
+            [ -f "$dest" ] && die "Drive conf already exists: $dest"
+            mkdir -p "$CONFD"
+            if [ -x "$WRITE_CONF_BIN" ]; then
+                "$WRITE_CONF_BIN" "$dest" || die "write-default-conf failed"
+            else
+                die "write-default-conf not found at $WRITE_CONF_BIN"
+            fi
+            log "Drive created: $dest"
+            log "Edit IMAGE_REAL/KEYFILE/NAME in $dest then run: imgdrive-ctl -c $dest setup 10G"
+            ;;
+        remove)
+            name="$DRIVES_ARG"
+            target="$CONFD/${name}.conf"
+            [ -f "$target" ] || die "Drive not found: $target"
+            rm -f "$target" && log "Removed: $target" || die "Failed to remove $target"
+            ;;
+    esac
+}
+
 case "$COMMAND" in
     mount)  start_stage1 ;;
     usb)    start_stage2 ;;
@@ -628,5 +836,8 @@ case "$COMMAND" in
     sync)   cmd_sync     ;;
     status) status_command ;;
     off)    stop_everything ;;
+    setup)  cmd_setup ;;
+    keys)   cmd_keys ;;
+    drives) cmd_drives ;;
     *) die "Unknown command: $COMMAND" ;;
 esac

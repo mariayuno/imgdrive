@@ -862,7 +862,16 @@ function setInd(id, ok, label) {
   rows[2].className = ok === true ? 'ind-ok' : ok === false ? 'ind-err' : 'ind-warn';
 }
 
+// ── State cache ───────────────────────────────────────────────────────
+let _lastLog = null;
+let _lastState = null;
+let _cachedDeep = {};  // last deep status fields (loop, size, slots, log)
+
 function applyState(s) {
+  // Merge deep fields from cache when running fast poll
+  if (s.fast) s = Object.assign({}, _cachedDeep, s);
+  else _cachedDeep = Object.assign({}, _cachedDeep, s);
+
   const meta = STATE_META[s.state] || STATE_META.BROKEN;
   const orb  = document.getElementById('stateOrb');
   orb.className = 'state-orb ' + meta.orb;
@@ -872,20 +881,15 @@ function applyState(s) {
 
   const usbDot   = document.getElementById('usbDot');
   const usbLabel = document.getElementById('usbLabel');
-  if (s.usb) {
-    usbDot.className   = 'dot dot-blue';
-    usbLabel.textContent = 'USB: connected';
-  } else {
-    usbDot.className   = 'dot dot-muted';
-    usbLabel.textContent = 'USB: disconnected';
-  }
+  usbDot.className     = s.usb ? 'dot dot-blue' : 'dot dot-muted';
+  usbLabel.textContent = s.usb ? 'USB: connected' : 'USB: disconnected';
 
-  setInd('keyfile', s.keyfile,  s.keyfile  ? 'readable' : 'missing');
+  setInd('keyfile', s.keyfile,  s.keyfile  ? 'readable'   : 'missing');
   setInd('image',   s.img_real, s.img_real ? s.image_size || 'present' : 'missing');
-  setInd('mapper',  s.mapper,   s.mapper   ? 'active'  : 'inactive');
-  setInd('f2fs',    s.f2fs,     s.f2fs     ? 'mounted' : 'unmounted');
-  setInd('bindfs',  s.bindfs,   s.bindfs   ? 'active'  : 'inactive');
-  setInd('iso',     s.iso,      s.iso      ? 'exporting' : 'idle');
+  setInd('mapper',  s.mapper,   s.mapper   ? 'active'     : 'inactive');
+  setInd('f2fs',    s.f2fs,     s.f2fs     ? 'mounted'    : 'unmounted');
+  setInd('bindfs',  s.bindfs,   s.bindfs   ? 'active'     : 'inactive');
+  setInd('iso',     s.iso,      s.iso      ? 'exporting'  : 'idle');
 
   document.getElementById('i-name').textContent   = s.name       || '—';
   document.getElementById('i-size').textContent   = s.image_size || '—';
@@ -896,58 +900,97 @@ function applyState(s) {
   document.getElementById('i-pub').textContent    = s.public_view || '—';
   document.getElementById('i-iso').textContent    = (s.iso_image && s.iso_image !== 'none') ? s.iso_image : '—';
 
-  if (s.log !== undefined) {
+  // Only rewrite log DOM when content changes
+  if (s.log !== undefined && s.log !== _lastLog) {
+    _lastLog = s.log;
     const lb = document.getElementById('logBody');
     lb.textContent = s.log || '(empty)';
     lb.scrollTop = lb.scrollHeight;
   }
-  // LUKS slot warning
+
+  // LUKS slot warning — only shown from deep status (luks_slots >= 0)
   const warn = document.getElementById('luksWarning');
   const slotSpan = document.getElementById('luksSlotCount');
-  if (s.img_real && s.luks_slots !== undefined) {
-    const slots = parseInt(s.luks_slots, 10) || 0;
+  const slots = parseInt(s.luks_slots, 10);
+  if (!s.fast && s.img_real && slots >= 0) {
     slotSpan.textContent = slots;
     warn.classList.toggle('show', slots < 2 && slots > 0);
-  } else {
-    warn.classList.remove('show');
   }
+
+  _lastState = s.state;
+}
+
+// ── Operation lock ───────────────────────────────────────────────────
+let _opBusy = false;
+let _statusBusy = false;
+
+function _setButtons(disabled) {
+  document.querySelectorAll('.btn, .setup-btn, .conf-btn, .save-btn')
+    .forEach(b => b.disabled = disabled);
 }
 
 // ── Active drive ─────────────────────────────────────────────────────
 let activeDrive = '/sdcard/Documents/imgdrive/imgdrive.conf';
 
-// ── Refresh / status poll ────────────────────────────────────────────
-async function refresh() {
-  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-status -c ' + JSON.stringify(activeDrive));
-  // Try to parse stdout regardless of errno — KernelSU can return non-zero
-  // errno even when the script itself exits 0 (subcommand exit codes bubble up
-  // in some exec implementations). Valid JSON always wins.
+// ── Status helpers ────────────────────────────────────────────────────
+async function _runStatus(fast) {
+  const flag = fast ? ' --fast' : '';
+  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-status -c ' +
+    JSON.stringify(activeDrive) + flag);
   if (r.stdout) {
-    try {
-      const s = JSON.parse(r.stdout);
-      applyState(s);
-      return;
-    } catch(e) {
-      toast('⚠️ Parse error: ' + e.message + ' — ' + r.stdout.slice(0, 60), 5000);
-      return;
+    try { return JSON.parse(r.stdout); } catch(e) {
+      if (!fast) toast('⚠️ Parse error: ' + e.message + ' — ' + r.stdout.slice(0,60), 5000);
     }
+  } else if (!fast) {
+    const d = r.stderr ? r.stderr.slice(0,80) : ('errno=' + r.errno + ' (no output)');
+    toast('⚠️ Status error: ' + d, 5000);
   }
-  // No stdout at all — surface whatever diagnostic we have.
-  const detail = r.stderr ? r.stderr.slice(0, 80) : ('errno=' + r.errno + ' (no output)');
-  toast('⚠️ Status error: ' + detail, 5000);
+  return null;
 }
 
-// ── Run command ──────────────────────────────────────────────────────
+// Fast poll — called by timer
+async function refresh() {
+  if (_statusBusy || _opBusy) return;
+  _statusBusy = true;
+  try {
+    const s = await _runStatus(true);
+    if (s) applyState(s);
+  } finally { _statusBusy = false; }
+}
+
+// Deep refresh — called after actions and on page load
+async function deepRefresh() {
+  _statusBusy = true;
+  try {
+    const s = await _runStatus(false);
+    if (s) applyState(s);
+  } finally { _statusBusy = false; }
+}
+
+// Burst poll after an action: fast every 1s × 5, then resume normal
+function _burstPoll() {
+  let n = 0;
+  const t = setInterval(async () => {
+    await refresh();
+    if (++n >= 5) clearInterval(t);
+  }, 1000);
+}
+
+// ── Run command ───────────────────────────────────────────────────────
 async function run(cmd, msg) {
+  if (_opBusy) { toast('⏳ Operation in progress'); return; }
+  _opBusy = true; _setButtons(true);
   showSpinner(msg);
-  const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-ctl -c ' + JSON.stringify(activeDrive) + ' ' + cmd);
-  hideSpinner();
-  if (r.errno !== 0) {
-    toast('❌ Failed: ' + (r.stderr || r.stdout || 'unknown error'), 4000);
-  } else {
-    toast('✅ Done');
+  try {
+    const r = await shellExec('/data/adb/imgdrive/bin/imgdrive-ctl -c ' +
+      JSON.stringify(activeDrive) + ' ' + cmd);
+    if (r.errno !== 0) toast('❌ Failed: ' + (r.stderr || r.stdout || 'unknown error'), 4000);
+    else toast('✅ Done');
+    await deepRefresh();
+    _burstPoll();
+  } finally {
+    _opBusy = false; _setButtons(false); hideSpinner();
   }
-  await refresh();
 }
 
 // ── Config load/save ─────────────────────────────────────────────────
@@ -974,13 +1017,20 @@ async function saveConf() {
 }
 
 async function writeDefaultConf() {
+  // Check if config already exists
+  const chk = await shellExec('[ -f ' + JSON.stringify(activeDrive) + ' ] && echo exists || echo absent');
+  const exists = (chk.stdout || '').trim() === 'exists';
+  if (exists) {
+    if (!confirm('Config already exists — overwrite it?\n\nA .bak copy will be saved automatically.')) return;
+  }
   showSpinner('Writing default config…');
-  const r = await shellExec('/data/adb/imgdrive/bin/write-default-conf ' + JSON.stringify(activeDrive));
+  const flag = exists ? ' --force' : '';
+  const r = await shellExec('/data/adb/imgdrive/bin/write-default-conf' + flag + ' ' + JSON.stringify(activeDrive));
   hideSpinner();
   if (r.errno !== 0) {
     toast('❌ Failed: ' + (r.stderr || r.stdout || ''), 4000);
   } else {
-    toast('✅ Default config written');
+    toast(exists ? '✅ Config replaced (.bak saved)' : '✅ Default config written');
     await loadConf();
   }
 }
@@ -1007,7 +1057,7 @@ async function loadDrives() {
 
 async function switchDrive(conf) {
   activeDrive = conf;
-  await Promise.all([refresh(), loadConf()]);
+  await Promise.all([deepRefresh(), loadConf()]);
 }
 
 async function addDrive() {
@@ -1024,7 +1074,7 @@ async function addDrive() {
   activeDrive = conf;
   await loadDrives();
   document.getElementById('driveSelect').value = conf;
-  await Promise.all([refresh(), loadConf()]);
+  await Promise.all([deepRefresh(), loadConf()]);
   toast('✅ Drive created — edit config then run Setup Storage');
 }
 
@@ -1039,7 +1089,7 @@ async function deleteDrive() {
   activeDrive = '/sdcard/Documents/imgdrive/imgdrive.conf';
   await loadDrives();
   document.getElementById('driveSelect').value = activeDrive;
-  await Promise.all([refresh(), loadConf()]);
+  await Promise.all([deepRefresh(), loadConf()]);
   toast('Drive conf removed');
 }
 
@@ -1196,13 +1246,18 @@ async function removeSlotN(n) {
 }
 
 async function setupStorage() {
+  if (_opBusy) { toast('⏳ Operation in progress'); return; }
   const size = parseInt(document.getElementById('setupSize').value, 10);
   const unit = document.getElementById('setupUnit').value;
   if (!size || size < 1) { toast('⚠️ Enter a valid size'); return; }
+  _opBusy = true; _setButtons(true);
 
   const logEl = document.getElementById('setupLog');
   logEl.textContent = '';
   logEl.classList.add('show');
+
+  // Guarantee unlock even on early-return error paths
+  const _setupDone = () => { _opBusy = false; _setButtons(false); };
 
   function slog(msg) {
     logEl.textContent += msg + '\n';
@@ -1215,11 +1270,13 @@ async function setupStorage() {
     '. ' + JSON.stringify(activeDrive) + ' 2>/dev/null && ' +
     'printf "%s\\n%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}" "${NAME:-drive}"'
   );
-  if (!cr.stdout || cr.stdout.includes('<')) {
-    slog('✖ Config not found or still has placeholders. Write and edit config first.'); return;
+  if (!cr.stdout || !cr.stdout.trim()) {
+    slog('✖ Could not read config. Tap "Write Default Config" first.'); _setupDone(); return;
   }
   const [IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME] = cr.stdout.trim().split('\n');
-  if (!IMAGE_REAL || !KEYFILE) { slog('✖ IMAGE_REAL or KEYFILE missing in config.'); return; }
+  if (!IMAGE_REAL || !KEYFILE) {
+    slog('✖ IMAGE_REAL or KEYFILE missing from config.'); _setupDone(); return;
+  }
   slog('  Image  : ' + IMAGE_REAL);
   slog('  Keyfile: ' + KEYFILE);
 
@@ -1283,6 +1340,8 @@ async function setupStorage() {
   await shellExec(JSON.stringify(CRYPTSETUP_BIN) + ' luksClose ' + SETUP_NAME + ' 2>&1');
   slog('');
   slog('✅ Drive ready. Run imgdrive-ctl mount or tap Mount above.');
+  _opBusy = false; _setButtons(false);
+  await deepRefresh(); _burstPoll();
 }
 
 async function clearLog() {
@@ -1291,19 +1350,25 @@ async function clearLog() {
   toast('Log cleared');
 }
 
-// ── Auto-refresh every 5 seconds ─────────────────────────────────────
+// ── Adaptive polling ──────────────────────────────────────────────────
 let _pollTimer;
+function _pollInterval() {
+  return _lastState === 'BROKEN' ? 2000 : 5000;
+}
 function startPoll() {
-  _pollTimer = setInterval(refresh, 5000);
-}
-function stopPoll() {
   clearInterval(_pollTimer);
+  const tick = async () => {
+    await refresh();
+    _pollTimer = setTimeout(tick, _pollInterval());
+  };
+  _pollTimer = setTimeout(tick, _pollInterval());
 }
+function stopPoll() { clearTimeout(_pollTimer); }
 document.addEventListener('visibilitychange', () => {
   document.hidden ? stopPoll() : (refresh(), startPoll());
 });
 
-// ── Init ─────────────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────
 (async () => {
   await loadRootApi();
   const badge = document.getElementById('apiBadge');
@@ -1313,8 +1378,9 @@ document.addEventListener('visibilitychange', () => {
       ? 'Root commands execute automatically via ' + _apiLabel
       : 'No root API detected — commands will show a copy/paste modal';
   }
-  await loadDrives();
-  await Promise.all([refresh(), loadConf()]);
+  // Show state immediately, load secondary info in parallel
+  const [, drives] = await Promise.all([deepRefresh(), loadDrives()]);
+  loadConf();   // non-blocking — config editor loads async
   startPoll();
 })();
 </script>
