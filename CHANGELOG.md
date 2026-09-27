@@ -1,3 +1,8 @@
+## v2.4
+
+- docs: versioned one-liner URLs, auto-updated by release workflow (89999dd)
+- docs: add one-liner install commands with auto-update markers (e9c6d2f)
+
 ## v2.3
 
 - fix: JSON log escaping, no-placeholder defaults, CLI for keys/setup/drives (c6ef348)
