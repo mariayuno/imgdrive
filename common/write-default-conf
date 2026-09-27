@@ -10,74 +10,27 @@ _write_conf() {
     conf_dir="$(dirname "$dest")"
     cat > "$dest" << CONF
 # imgdrive configuration
-# Edit this file to match your setup, then run: imgdrive-ctl mount
-# All paths are required unless marked optional.
+# Defaults use internal storage — works out of the box.
+# Change IMAGE_REAL/IMAGE_USB to an SD card path if preferred.
+# Run: imgdrive-ctl setup 10G   (or use WebUI → Create Encrypted Drive)
 
-# ---------------------------------------------------------------------------
-# Image paths
-# ---------------------------------------------------------------------------
+# Path to the image file — internal storage default, no SD card needed.
+IMAGE_REAL="/data/media/0/imgdrive/drive.img"
 
-# Full path to the image on the SD card (real block device mount, not emulated).
-# This is the backing file for Stage 1 (LUKS + F2FS local mount).
-# Must NOT be under /storage/emulated/0 — use the raw SD path.
-# To find your SD card partition ID run: ls /mnt/media_rw/
-IMAGE_REAL="/mnt/media_rw/<sdcard_id>/drive.img"
+# Same file via emulated storage (used by isodrive for USB export).
+IMAGE_USB="/storage/emulated/0/imgdrive/drive.img"
 
-# Path to the same image as seen through Android's emulated storage.
-# Used by isodrive for Stage 2 (USB export).
-# Replace <sdcard_id> with the same value as above.
-IMAGE_USB="/storage/emulated/0/ext/sdcard/drive.img"
-
-# ---------------------------------------------------------------------------
-# LUKS keyfile
-# ---------------------------------------------------------------------------
-
-# Absolute path to the LUKS keyfile.
-# Defaults to the same directory as this config file for convenience.
-# Must be readable by root after the device is unlocked.
+# LUKS keyfile — stored next to this config file.
 KEYFILE="${conf_dir}/imgdrive.key"
 
-# ---------------------------------------------------------------------------
-# Mapper / filesystem
-# ---------------------------------------------------------------------------
-
-# Name for the dm-crypt device: appears as /dev/mapper/<NAME>
 NAME="drive"
-
-# ---------------------------------------------------------------------------
-# Mountpoints
-# ---------------------------------------------------------------------------
-
-# Where the raw F2FS filesystem is mounted (in PID 1 namespace).
 REAL_MOUNT="/mnt/media_rw/drive"
-
-# bindfs view exposed to Android media UID (1023).
 USER_VIEW="/data/media/0/drive"
-
-# Public path after Android's FUSE/emulated-storage propagation.
 PUBLIC_VIEW="/storage/emulated/0/drive"
-
-# ---------------------------------------------------------------------------
-# bindfs ownership / permissions
-# ---------------------------------------------------------------------------
-
 BIND_UID=1023
 BIND_GID=1023
 BIND_PERMS=0770
-
-# ---------------------------------------------------------------------------
-# Auto-mount on boot
-# ---------------------------------------------------------------------------
-
-# Set to 1 to automatically bring up Stage 1 after boot
-# (once CE storage is decrypted, the keyfile is visible, and the image exists).
-# Set to 0 to disable — use imgdrive-ctl manually instead.
 AUTO_MOUNT=1
-
-# ---------------------------------------------------------------------------
-# Binary paths (Termux dependencies — do not change unless you know why)
-# ---------------------------------------------------------------------------
-
 CRYPTSETUP_BIN="/data/data/com.termux/files/usr/bin/cryptsetup"
 LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
 BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"

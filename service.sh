@@ -117,10 +117,11 @@ _write_default_conf_inline() {
     _logv "  inline: writing heredoc to '$dest'"
     cat > "$dest" << CONF
 # imgdrive configuration — auto-generated default
-# Edit IMAGE_REAL, KEYFILE, then run: imgdrive-ctl mount
+# Defaults use internal storage — works out of the box.
+# Run: imgdrive-ctl setup 10G   (or use WebUI → Create Encrypted Drive)
 
-IMAGE_REAL="/mnt/media_rw/<sdcard_id>/drive.img"
-IMAGE_USB="/storage/emulated/0/ext/sdcard/drive.img"
+IMAGE_REAL="/data/media/0/imgdrive/drive.img"
+IMAGE_USB="/storage/emulated/0/imgdrive/drive.img"
 KEYFILE="$(dirname "$dest")/imgdrive.key"
 NAME="drive"
 REAL_MOUNT="/mnt/media_rw/drive"
