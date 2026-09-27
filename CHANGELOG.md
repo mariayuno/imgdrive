@@ -1,3 +1,7 @@
+## v2.5
+
+- fix: remove duplicate closing brace in _log_tail() (b21eb8f)
+
 ## v2.4
 
 - docs: versioned one-liner URLs, auto-updated by release workflow (89999dd)
