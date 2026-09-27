@@ -1,3 +1,13 @@
+## v2.7
+
+- Update README with installation instructions for v2.6 (003f146)
+- Update version badge in README.md (1341953)
+- Update version badge in README.md to v2.6 (aceb195)
+- Change badge style from for-the-badge to flat-square (f4a0adc)
+- Change version badge style to flat-square (aefdc74)
+- Change version badge style in README (c90c5d6)
+- Enhance README generation and validation in workflow (a5a7a52)
+
 ## v2.6
 
 - Update README with installation and configuration info (90e8928)

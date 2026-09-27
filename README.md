@@ -17,7 +17,7 @@
   <img alt="Root" src="https://img.shields.io/badge/root-Magisk%20%7C%20KernelSU%20%7C%20APatch-black">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue">
 <!-- VERSION_BADGE_START -->
-  <img alt="Version" src="https://img.shields.io/badge/version-v2.6-7c3aed?style=flat-square&logo=github&logoColor=white">
+<img alt="Version" src="https://img.shields.io/badge/version-v2.7-7c3aed?style=flat-square&logo=github&logoColor=white">
 <!-- VERSION_BADGE_END -->
 </p>
 
@@ -83,28 +83,44 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 ---
 
 <!-- INSTALL_ONELINER_START -->
+<table>
+<tr>
+<td valign="top" width="70%">
 
-### Latest Release
+### One-liner (recommended)
 
-**Version:** `v2.6`
+> Downloads the current release and installs it directly.
 
-**Version code:** `17`
+**KernelSU / APatch**
 
-**Package:** `imgdrive-v2.6.zip`
-
-#### Download
-
-[Download imgdrive-v2.6.zip](https://github.com/rexackermann/imgdrive/releases/download/v2.6/imgdrive-v2.6.zip)
-
-#### Install with KernelSU
-
-```bash
-ksud module install /sdcard/Download/imgdrive-v2.6.zip
+```sh
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.7/imgdrive-v2.7.zip && /data/adb/ksud module install /tmp/imgdrive.zip
 ```
 
-#### Install with Magisk
+**Magisk**
 
-Flash `imgdrive-v2.6.zip` from the Magisk app.
+```sh
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.7/imgdrive-v2.7.zip && magisk --install-module /tmp/imgdrive.zip
+```
+
+**APatch**
+
+```sh
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v2.7/imgdrive-v2.7.zip && /data/adb/apd module install /tmp/imgdrive.zip
+```
+
+</td>
+<td valign="top" align="right" width="30%">
+
+<p align="right">
+<img alt="Version" src="https://img.shields.io/badge/v2.7-7c3aed?style=for-the-badge&logo=github&logoColor=white"><br>
+<img alt="Package" src="https://img.shields.io/badge/package-imgdrive-v2.7.zip-2563eb?style=for-the-badge&logo=files&logoColor=white"><br>
+<img alt="Version Code" src="https://img.shields.io/badge/version%20code-18-0891b2?style=for-the-badge">
+</p>
+
+</td>
+</tr>
+</table>
 
 <!-- INSTALL_ONELINER_END -->
 
