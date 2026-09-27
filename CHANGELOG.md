@@ -1,3 +1,7 @@
+## v2.9
+
+- Update main.yml (ba87cd7)
+
 ## v2.8
 
 - Add Installation section to README (5b23695)
