@@ -56,16 +56,20 @@ _log "CE storage decrypted — proceeding"
 # directory but have a dead transport ("Transport endpoint is not connected").
 # Poll with an actual ls until the filesystem responds.
 # ---------------------------------------------------------------------------
-_log "Waiting for /sdcard to be readable…"
+_log "Waiting for /sdcard to be writable…"
 i=0
 while [ "$i" -lt 120 ]; do
-    ls /sdcard/ >/dev/null 2>&1 && break
+    if touch /sdcard/.imgdrive_ready 2>/dev/null; then
+        rm -f /sdcard/.imgdrive_ready 2>/dev/null
+        break
+    fi
     sleep 1; i=$((i+1))
 done
-if ls /sdcard/ >/dev/null 2>&1; then
-    _log "/sdcard ready after ${i}s"
+if touch /sdcard/.imgdrive_ready 2>/dev/null; then
+    rm -f /sdcard/.imgdrive_ready 2>/dev/null
+    _log "/sdcard writable after ${i}s"
 else
-    _log "WARNING: /sdcard still unreadable after 120s — continuing anyway"
+    _log "WARNING: /sdcard not writable after 120s — continuing anyway"
 fi
 
 # ---------------------------------------------------------------------------
@@ -128,7 +132,8 @@ fi
 (
     while true; do
         sleep 30
-        ls /sdcard/ >/dev/null 2>&1 || continue
+        if ! touch /sdcard/.imgdrive_ready 2>/dev/null; then continue; fi
+        rm -f /sdcard/.imgdrive_ready 2>/dev/null
         [ ! -f "$PRIMARY_CONF" ] || continue
         _log "Primary config missing — repopulating"
         _repopulate_conf "$PRIMARY_CONF"
