@@ -107,12 +107,14 @@ _luks_slot_count() {
 
 _log_tail() {
     logfile="/data/adb/imgdrive/log/service.log"
-    # Per-drive log if it exists, else fall back to shared log
     name_log="/data/adb/imgdrive/log/${NAME}.log"
     [ -f "$name_log" ] && logfile="$name_log"
     tail -n 40 "$logfile" 2>/dev/null |
-        sed 's/\\/\\\\/g; s/"/\\"/g' |
+        tr -d '\r' |
+        sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' |
+        tr -d '\001\002\003\004\005\006\007\010\013\014\015\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037' |
         awk 'BEGIN{ORS="\\n"} {print}'
+}
 }
 
 # ---- gather state ----

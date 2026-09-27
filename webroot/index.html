@@ -1215,11 +1215,13 @@ async function setupStorage() {
     '. ' + JSON.stringify(activeDrive) + ' 2>/dev/null && ' +
     'printf "%s\\n%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}" "${NAME:-drive}"'
   );
-  if (!cr.stdout || cr.stdout.includes('<')) {
-    slog('✖ Config not found or still has placeholders. Write and edit config first.'); return;
+  if (!cr.stdout || !cr.stdout.trim()) {
+    slog('✖ Could not read config. Tap "Write Default Config" first.'); return;
   }
   const [IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME] = cr.stdout.trim().split('\n');
-  if (!IMAGE_REAL || !KEYFILE) { slog('✖ IMAGE_REAL or KEYFILE missing in config.'); return; }
+  if (!IMAGE_REAL || !KEYFILE) {
+    slog('✖ IMAGE_REAL or KEYFILE missing from config.'); return;
+  }
   slog('  Image  : ' + IMAGE_REAL);
   slog('  Keyfile: ' + KEYFILE);
 
