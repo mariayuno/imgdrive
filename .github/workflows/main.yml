@@ -330,7 +330,7 @@ jobs:
               print "<tr>"
               print "<td valign=\"top\" width=\"70%\">"
               print ""
-              print "### One-liner (recommended)"
+              print "### One-liner(Just run it in a root shell)"
               print ""
               print "> Downloads the current release and installs it directly."
               print ""
