@@ -23,27 +23,42 @@ jobs:
         id: bump
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           PROP="module.prop"
 
-          OLD_CODE=$(grep '^versionCode=' "$PROP" | cut -d= -f2)
-          NEW_CODE=$((OLD_CODE + 1))
+          if [[ ! -f "$PROP" ]]; then
+            echo "ERROR: $PROP not found."
+            exit 1
+          fi
 
+          OLD_CODE=$(grep '^versionCode=' "$PROP" | cut -d= -f2)
           CURRENT_VERSION=$(grep '^version=' "$PROP" | cut -d= -f2)
+
+          if [[ -z "$OLD_CODE" || -z "$CURRENT_VERSION" ]]; then
+            echo "ERROR: Could not read version/versionCode from $PROP."
+            exit 1
+          fi
+
+          if ! [[ "$OLD_CODE" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Invalid versionCode: $OLD_CODE"
+            exit 1
+          fi
+
+          NEW_CODE=$((OLD_CODE + 1))
 
           if [[ "$CURRENT_VERSION" =~ ^v([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
             MINOR="${BASH_REMATCH[2]}"
           else
-            echo "Invalid version format: $CURRENT_VERSION"
+            echo "ERROR: Invalid version format: $CURRENT_VERSION"
             echo "Expected format: vMAJOR.MINOR"
             exit 1
           fi
 
           # Increment the minor version.
-          # v1.9 becomes v2.0.
-          if ((MINOR >= 9)); then
+          # v1.9 -> v2.0
+          if (( MINOR >= 9 )); then
             NEW_MAJOR=$((MAJOR + 1))
             NEW_MINOR=0
           else
@@ -59,42 +74,62 @@ jobs:
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "version_code=${NEW_CODE}" >> "$GITHUB_OUTPUT"
 
+          echo "Version:     ${CURRENT_VERSION} -> ${NEW_VERSION}"
+          echo "VersionCode: ${OLD_CODE} -> ${NEW_CODE}"
+
       - name: Prepare release metadata
         id: meta
         shell: bash
         run: |
+          set -euo pipefail
+
           VERSION="${{ steps.bump.outputs.version }}"
 
-          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "name=imgdrive ${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "artifact=imgdrive-${VERSION}.zip" >> "$GITHUB_OUTPUT"
+          TAG="${VERSION}"
+          NAME="imgdrive ${VERSION}"
+          ARTIFACT="imgdrive-${VERSION}.zip"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+
+          echo "Release tag:  ${TAG}"
+          echo "Release name: ${NAME}"
+          echo "Artifact:     ${ARTIFACT}"
 
       - name: Update update.json
         shell: bash
         run: |
+          set -euo pipefail
+
           VERSION="${{ steps.bump.outputs.version }}"
           VERSION_CODE="${{ steps.bump.outputs.version_code }}"
           ARTIFACT="${{ steps.meta.outputs.artifact }}"
+
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ARTIFACT}"
+          CHANGELOG_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md"
 
           cat > update.json <<EOF
           {
             "version": "${VERSION}",
             "versionCode": ${VERSION_CODE},
             "zipUrl": "${ZIP_URL}",
-            "changelog": "https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md"
+            "changelog": "${CHANGELOG_URL}"
           }
           EOF
+
+          echo "Generated update.json:"
+          cat update.json
 
       - name: Generate changelog
         id: changelog
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
 
-          if [ -n "$LAST_TAG" ]; then
+          if [[ -n "$LAST_TAG" ]]; then
             RANGE="${LAST_TAG}..HEAD"
           else
             RANGE="HEAD"
@@ -105,7 +140,7 @@ jobs:
             --no-merges \
             | grep -v '^- chore: bump version' || true)
 
-          if [ -z "$LOG" ]; then
+          if [[ -z "$LOG" ]]; then
             LOG="- Minor update"
           fi
 
@@ -115,6 +150,7 @@ jobs:
             echo "$LOG"
             echo
             echo "## Checksums"
+            echo
             echo '```'
             echo "The SHA256 checksum is included below."
             echo '```'
@@ -125,11 +161,12 @@ jobs:
           VERSION="${{ steps.bump.outputs.version }}"
           NEW_ENTRY="## ${VERSION}"$'\n\n'"${LOG}"$'\n'
 
-          if [ -f CHANGELOG.md ]; then
+          if [[ -f CHANGELOG.md ]]; then
             {
               echo "$NEW_ENTRY"
               cat CHANGELOG.md
             } > CHANGELOG.md.tmp
+
             mv CHANGELOG.md.tmp CHANGELOG.md
           else
             printf '%s\n' "$NEW_ENTRY" > CHANGELOG.md
@@ -137,11 +174,187 @@ jobs:
 
           echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
 
+      - name: Update README install snippets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          README="README.md"
+          START_MARKER="<!-- BEGIN GENERATED INSTALL -->"
+          END_MARKER="<!-- END GENERATED INSTALL -->"
+
+          VERSION="${{ steps.bump.outputs.version }}"
+          VERSION_CODE="${{ steps.bump.outputs.version_code }}"
+          ARTIFACT="${{ steps.meta.outputs.artifact }}"
+
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ARTIFACT}"
+
+          echo "Checking README generated-section markers..."
+
+          if [[ ! -f "$README" ]]; then
+            echo "ERROR: $README not found."
+            exit 1
+          fi
+
+          START_COUNT=$(grep -Fxc "$START_MARKER" "$README" || true)
+          END_COUNT=$(grep -Fxc "$END_MARKER" "$README" || true)
+
+          if (( START_COUNT != 1 )); then
+            echo "ERROR: Expected exactly one:"
+            echo "  $START_MARKER"
+            echo "Found: $START_COUNT"
+            exit 1
+          fi
+
+          if (( END_COUNT != 1 )); then
+            echo "ERROR: Expected exactly one:"
+            echo "  $END_MARKER"
+            echo "Found: $END_COUNT"
+            exit 1
+          fi
+
+          START_LINE=$(grep -n -F "$START_MARKER" "$README" | cut -d: -f1)
+          END_LINE=$(grep -n -F "$END_MARKER" "$README" | cut -d: -f1)
+
+          if (( START_LINE >= END_LINE )); then
+            echo "ERROR: README generated-section markers are in the wrong order."
+            echo "START line: $START_LINE"
+            echo "END line:   $END_LINE"
+            exit 1
+          fi
+
+          echo "README markers OK:"
+          echo "  START: line $START_LINE"
+          echo "  END:   line $END_LINE"
+
+          TMP_README="${README}.tmp"
+
+          awk \
+            -v start="$START_MARKER" \
+            -v end="$END_MARKER" \
+            -v version="$VERSION" \
+            -v version_code="$VERSION_CODE" \
+            -v artifact="$ARTIFACT" \
+            -v release_url="$RELEASE_URL" \
+            '
+            $0 == start {
+              print
+              print ""
+              print "### Latest Release"
+              print ""
+              print "**Version:** `" version "`"
+              print ""
+              print "**Version code:** `" version_code "`"
+              print ""
+              print "**Package:** `" artifact "`"
+              print ""
+              print "#### Download"
+              print ""
+              print "[Download " artifact "](" release_url ")"
+              print ""
+              print "#### Install with KernelSU"
+              print ""
+              print "```bash"
+              print "ksud module install /sdcard/Download/" artifact
+              print "```"
+              print ""
+              print "#### Install with Magisk"
+              print ""
+              print "Flash `" artifact "` from the Magisk app."
+              print ""
+              in_generated=1
+              next
+            }
+
+            $0 == end {
+              in_generated=0
+              print
+              next
+            }
+
+            !in_generated {
+              print
+            }
+            ' "$README" > "$TMP_README"
+
+          mv "$TMP_README" "$README"
+
+          echo "README generated section updated."
+
+      - name: Verify generated README
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          README="README.md"
+
+          VERSION="${{ steps.bump.outputs.version }}"
+          VERSION_CODE="${{ steps.bump.outputs.version_code }}"
+          ARTIFACT="${{ steps.meta.outputs.artifact }}"
+
+          START_MARKER="<!-- BEGIN GENERATED INSTALL -->"
+          END_MARKER="<!-- END GENERATED INSTALL -->"
+
+          echo "Verifying README..."
+
+          START_COUNT=$(grep -Fxc "$START_MARKER" "$README" || true)
+          END_COUNT=$(grep -Fxc "$END_MARKER" "$README" || true)
+
+          if (( START_COUNT != 1 )); then
+            echo "ERROR: README must contain exactly one START marker."
+            exit 1
+          fi
+
+          if (( END_COUNT != 1 )); then
+            echo "ERROR: README must contain exactly one END marker."
+            exit 1
+          fi
+
+          START_LINE=$(grep -n -F "$START_MARKER" "$README" | cut -d: -f1)
+          END_LINE=$(grep -n -F "$END_MARKER" "$README" | cut -d: -f1)
+
+          if (( START_LINE >= END_LINE )); then
+            echo "ERROR: README markers are malformed."
+            exit 1
+          fi
+
+          SECTION=$(sed -n "${START_LINE},${END_LINE}p" "$README")
+
+          if ! grep -Fq "**Version:** \`${VERSION}\`" <<< "$SECTION"; then
+            echo "ERROR: README does not contain expected version: $VERSION"
+            exit 1
+          fi
+
+          if ! grep -Fq "**Version code:** \`${VERSION_CODE}\`" <<< "$SECTION"; then
+            echo "ERROR: README does not contain expected versionCode: $VERSION_CODE"
+            exit 1
+          fi
+
+          if ! grep -Fq "**Package:** \`${ARTIFACT}\`" <<< "$SECTION"; then
+            echo "ERROR: README does not contain expected artifact: $ARTIFACT"
+            exit 1
+          fi
+
+          if ! grep -Fq "ksud module install /sdcard/Download/${ARTIFACT}" <<< "$SECTION"; then
+            echo "ERROR: README KernelSU install command is stale or missing."
+            exit 1
+          fi
+
+          if ! grep -Fq "$ARTIFACT" <<< "$SECTION"; then
+            echo "ERROR: README generated section does not reference $ARTIFACT"
+            exit 1
+          fi
+
+          echo "README verification passed."
+          echo
+          echo "Generated section:"
+          sed -n "${START_LINE},${END_LINE}p" "$README"
+
       - name: Build flashable zip
         id: build
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           ZIP="${{ steps.meta.outputs.artifact }}"
 
@@ -155,25 +368,91 @@ jobs:
 
           SHA256=$(sha256sum "$ZIP" | cut -d' ' -f1)
 
-          sed -i "s/The SHA256 checksum is included below./SHA256  ${SHA256}  ${ZIP}/" release_notes.md
+          sed -i \
+            "s/The SHA256 checksum is included below\./SHA256  ${SHA256}  ${ZIP}/" \
+            release_notes.md
 
           echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
-      - name: Commit version and changelog updates
+          echo "Built:    $ZIP"
+          echo "SHA256:   $SHA256"
+
+      - name: Final consistency check
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
+          VERSION="${{ steps.bump.outputs.version }}"
+          VERSION_CODE="${{ steps.bump.outputs.version_code }}"
+          ARTIFACT="${{ steps.meta.outputs.artifact }}"
+
+          echo "Running final consistency checks..."
+
+          # module.prop
+          ACTUAL_VERSION=$(grep '^version=' module.prop | cut -d= -f2)
+          ACTUAL_VERSION_CODE=$(grep '^versionCode=' module.prop | cut -d= -f2)
+
+          if [[ "$ACTUAL_VERSION" != "$VERSION" ]]; then
+            echo "ERROR: module.prop version mismatch."
+            echo "Expected: $VERSION"
+            echo "Actual:   $ACTUAL_VERSION"
+            exit 1
+          fi
+
+          if [[ "$ACTUAL_VERSION_CODE" != "$VERSION_CODE" ]]; then
+            echo "ERROR: module.prop versionCode mismatch."
+            echo "Expected: $VERSION_CODE"
+            echo "Actual:   $ACTUAL_VERSION_CODE"
+            exit 1
+          fi
+
+          # update.json
+          JSON_VERSION=$(grep '"version"' update.json | head -1 | sed 's/.*"version": "\(.*\)",/\1/')
+          JSON_VERSION_CODE=$(grep '"versionCode"' update.json | head -1 | sed 's/[^0-9]*\([0-9][0-9]*\).*/\1/')
+
+          if [[ "$JSON_VERSION" != "$VERSION" ]]; then
+            echo "ERROR: update.json version mismatch."
+            exit 1
+          fi
+
+          if [[ "$JSON_VERSION_CODE" != "$VERSION_CODE" ]]; then
+            echo "ERROR: update.json versionCode mismatch."
+            exit 1
+          fi
+
+          # Artifact
+          if [[ ! -f "$ARTIFACT" ]]; then
+            echo "ERROR: Expected release artifact does not exist:"
+            echo "  $ARTIFACT"
+            exit 1
+          fi
+
+          # README
+          if ! grep -Fq "$ARTIFACT" README.md; then
+            echo "ERROR: README does not reference release artifact:"
+            echo "  $ARTIFACT"
+            exit 1
+          fi
+
+          echo "All consistency checks passed."
+
+      - name: Commit version, changelog and README updates
+        shell: bash
+        run: |
+          set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add module.prop update.json CHANGELOG.md
+          git add module.prop update.json CHANGELOG.md README.md
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+            git commit \
+              -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+
             git push origin HEAD:main
           fi
 
