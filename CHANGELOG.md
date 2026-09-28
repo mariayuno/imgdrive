@@ -1,3 +1,7 @@
+## v3.3
+
+- fix: configurable inner filesystem (INNER_FS/MKFS_BIN), fix termux mkfs path, improve WebUI size picker (0039e1c)
+
 ## v3.2
 
 - refactor+perf: delegate setupStorage to CLI, periodic deep refresh (1f550c3)
