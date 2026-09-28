@@ -71,10 +71,13 @@ _logv "  /proc/mounts emulated line: $(grep emulated /proc/mounts 2>/dev/null | 
 PROBE="/sdcard/.imgdrive_probe_$$"
 i=0
 while [ "$i" -lt 120 ]; do
-    result="$(touch "$PROBE" 2>&1)"; rc=$?
+    # mkdir instead of touch: FUSE can accept touch at the root while
+    # subdirectory creation ("Transport endpoint is not connected") still
+    # fails.  write-default-conf does mkdir -p, so probe the same op.
+    result="$(mkdir "$PROBE" 2>&1)"; rc=$?
     _logv "  write probe attempt $i/120: exit=$rc ${result:+err='$result'}"
     if [ "$rc" -eq 0 ]; then
-        rm -f "$PROBE" 2>/dev/null
+        rmdir "$PROBE" 2>/dev/null
         _log "/sdcard writable after ${i}s"
         break
     fi
@@ -187,7 +190,7 @@ fi
     while true; do
         sleep 30
         PROBE2="/sdcard/.imgdrive_probe_watcher"
-        touch "$PROBE2" 2>/dev/null && rm -f "$PROBE2" 2>/dev/null || continue
+        mkdir "$PROBE2" 2>/dev/null && rmdir "$PROBE2" 2>/dev/null || continue
         [ ! -f "$PRIMARY_CONF" ] || continue
         _log "Config missing (watcher) — repopulating"
         _repopulate_conf "$PRIMARY_CONF"
