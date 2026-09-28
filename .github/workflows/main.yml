@@ -334,7 +334,7 @@ jobs:
               print ""
               print "> Downloads the current release and installs it directly."
               print ""
-              print "**KernelSU / APatch**"
+              print "**KernelSU / SuKisu**"
               print ""
               print "```sh"
               print "curl -Lo /tmp/imgdrive.zip " release_url " && /data/adb/ksud module install /tmp/imgdrive.zip"
