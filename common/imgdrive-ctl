@@ -705,14 +705,13 @@ cmd_setup() {
     img_dir="$(dirname "$IMAGE_REAL")"
     mkdir -p "$img_dir" || die "Cannot create image dir: $img_dir"
     if [ -f "$IMAGE_REAL" ]; then
-        log "Image already exists — skipping allocation (delete it first to reprovision)"
-    else
-        log "Allocating ${num}${unit}B image…"
-        fallocate -l "${num}${unit}" "$IMAGE_REAL" 2>/dev/null || \
-            truncate -s "${num}${unit}" "$IMAGE_REAL" || \
-            die "Image allocation failed"
-        log "Image allocated: $(ls -lh "$IMAGE_REAL" | awk '{print $5}')"
+        die "Image already exists: $IMAGE_REAL — delete it first if you want to reprovision (ALL DATA WILL BE LOST)"
     fi
+    log "Allocating ${num}${unit}B image…"
+    fallocate -l "${num}${unit}" "$IMAGE_REAL" 2>/dev/null || \
+        truncate -s "${num}${unit}" "$IMAGE_REAL" || \
+        die "Image allocation failed"
+    log "Image allocated: $(ls -lh "$IMAGE_REAL" | awk '{print $5}')"
 
     # Step 3: LUKS2 format
     log "Formatting LUKS2…"
