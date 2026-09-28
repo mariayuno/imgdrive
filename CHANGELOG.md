@@ -1,3 +1,7 @@
+## v3.7
+
+- Update KernelSU reference to SuKisu in workflow (83ffba0)
+
 ## v3.6
 
 - fix: use mkdir probe for /sdcard write-ready check (7411fe5)
