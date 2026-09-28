@@ -439,20 +439,42 @@
   }
 
   /* ── Setup storage ── */
-  .setup-row {
-    display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
+  .size-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .size-preset-btn {
+    flex: 1; min-width: 52px;
+    background: var(--surface2); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 10px 6px;
+    color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
   }
-  .setup-row input[type=number] {
+  .size-preset-btn.active {
+    border-color: var(--accent); color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+  }
+  .size-custom-row { display: none; gap: 8px; margin-bottom: 8px; }
+  .size-custom-row.show { display: flex; }
+  .size-custom-row input[type=number] {
     flex: 1; min-width: 0;
     background: var(--surface2); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 12px;
     color: var(--text); font-size: 14px; outline: none;
   }
-  .setup-row input[type=number]:focus { border-color: var(--accent); }
-  .setup-row select {
+  .size-custom-row input[type=number]:focus { border-color: var(--accent); }
+  .size-custom-row select {
     background: var(--surface2); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 10px;
     color: var(--text); font-size: 14px; outline: none; cursor: pointer;
+  }
+  .file-pick-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .file-pick-row input[type=text] {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 13px; outline: none;
+  }
+  .file-pick-row input[type=text]:focus { border-color: var(--accent); }
+  .file-pick-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 16px; cursor: pointer;
   }
   .setup-btn {
     background: linear-gradient(135deg,#d97706,#b45309); border: none;
@@ -616,13 +638,22 @@
   <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
     Allocates image, generates keyfile, formats LUKS2 + F2FS. Requires config paths to be set first.
   </div>
-  <div class="setup-row">
+  <div class="size-presets">
+    <button class="size-preset-btn" onclick="setSize(1,'G',this)">1 GB</button>
+    <button class="size-preset-btn" onclick="setSize(5,'G',this)">5 GB</button>
+    <button class="size-preset-btn active" onclick="setSize(10,'G',this)">10 GB</button>
+    <button class="size-preset-btn" onclick="setSize(25,'G',this)">25 GB</button>
+    <button class="size-preset-btn" onclick="setSize(50,'G',this)">50 GB</button>
+    <button class="size-preset-btn" onclick="setSize(0,'G',this)">Custom…</button>
+  </div>
+  <div class="size-custom-row" id="sizeCustomRow">
     <input type="number" id="setupSize" min="1" value="10" placeholder="Size">
     <select id="setupUnit">
       <option value="G">GB</option>
       <option value="M">MB</option>
     </select>
   </div>
+  <input type="file" id="filePicker" style="display:none" onchange="onFilePicked(this)">
   <button class="setup-btn" onclick="setupStorage()">🛠 Create Encrypted Drive</button>
   <div class="setup-log" id="setupLog"></div>
 
@@ -655,9 +686,15 @@
     </div>
 
     <div class="keys-section-head">Add keyfile slot</div>
-    <div class="keys-input-row">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+      Pick an existing keyfile or enter a path — a new 64-byte keyfile will be generated if it doesn't exist.
+    </div>
+    <div class="file-pick-row">
       <input type="text" id="newKeyfilePath" placeholder="/sdcard/Documents/imgdrive/backup.key">
-      <button onclick="addKeyfileSlot()">Add</button>
+      <button class="file-pick-btn" onclick="pickFile('newKeyfilePath')" title="Browse">📂</button>
+    </div>
+    <div class="keys-input-row" style="margin-top:4px">
+      <button style="width:100%" onclick="addKeyfileSlot()">Add keyfile slot</button>
     </div>
 
     <div class="keys-section-head">Remove slot</div>
@@ -904,8 +941,8 @@ function applyState(s) {
   if (s.log !== undefined && s.log !== _lastLog) {
     _lastLog = s.log;
     const lb = document.getElementById('logBody');
-    lb.textContent = s.log || '(empty)';
-    lb.scrollTop = lb.scrollHeight;
+    if (s.log) { lb.textContent = s.log; lb.scrollTop = lb.scrollHeight; }
+    // Don't blank the log when service.log is empty — keep last visible content
   }
 
   // LUKS slot warning — only shown from deep status (luks_slots >= 0)
@@ -1187,7 +1224,7 @@ async function addPassphrase() {
     "printf '%s' '" + escaped + "' | " +
     JSON.stringify(CRYPTSETUP_BIN) +
     ' luksAddKey --key-file ' + JSON.stringify(KEYFILE) +
-    ' ' + JSON.stringify(IMAGE_REAL) + ' --new-keyfile-fd 0 2>&1'
+    ' ' + JSON.stringify(IMAGE_REAL) + ' - 2>&1'
   );
   if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
   klog('✅ Passphrase slot added.');
@@ -1245,11 +1282,59 @@ async function removeSlotN(n) {
   await refresh();
 }
 
+// ── Size presets ──────────────────────────────────────────────────────
+let _setupSizeNum = 10, _setupSizeUnit = 'G';
+function setSize(num, unit, btn) {
+  document.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const customRow = document.getElementById('sizeCustomRow');
+  if (num === 0) {
+    customRow.classList.add('show');
+  } else {
+    customRow.classList.remove('show');
+    _setupSizeNum = num; _setupSizeUnit = unit;
+    document.getElementById('setupSize').value = num;
+    document.getElementById('setupUnit').value = unit;
+  }
+}
+
+// ── File picker (Android /sdcard → /data/media/0) ─────────────────────
+let _filePickTarget = null;
+function pickFile(inputId) {
+  _filePickTarget = inputId;
+  document.getElementById('filePicker').click();
+}
+function onFilePicked(input) {
+  if (!input.files || !input.files[0]) return;
+  const f = input.files[0];
+  // file.name only gives filename — we need the path.
+  // On Android WebUI the full path is sometimes in webkitRelativePath or we fall back to name.
+  // Convert any /sdcard/ or /storage/emulated/0/ prefix → /data/media/0/
+  let path = '';
+  if (f.path) {                  // some environments expose f.path
+    path = f.path;
+  } else {
+    // Best we can do without shell: use filename as hint, note /sdcard default dir
+    path = '/sdcard/' + f.name;
+  }
+  path = path.replace(/^\/storage\/emulated\/0\//, '/data/media/0/')
+             .replace(/^\/sdcard\//, '/data/media/0/');
+  if (_filePickTarget) {
+    document.getElementById(_filePickTarget).value = path;
+  }
+  input.value = '';   // reset so same file can be picked again
+}
+
 async function setupStorage() {
   if (_opBusy) { toast('⏳ Operation in progress'); return; }
-  const size = parseInt(document.getElementById('setupSize').value, 10);
-  const unit = document.getElementById('setupUnit').value;
-  if (!size || size < 1) { toast('⚠️ Enter a valid size'); return; }
+  const customVisible = document.getElementById('sizeCustomRow').classList.contains('show');
+  const size = customVisible
+    ? parseInt(document.getElementById('setupSize').value, 10)
+    : _setupSizeNum;
+  const unit = customVisible
+    ? document.getElementById('setupUnit').value
+    : _setupSizeUnit;
+  if (!size || size < 1) { toast('⚠️ Select or enter a size'); return; }
   _opBusy = true; _setButtons(true);
 
   const logEl = document.getElementById('setupLog');
@@ -1264,23 +1349,26 @@ async function setupStorage() {
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  // Read config to get IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME
+  // Read config to get IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, MKFS_F2FS_BIN, FS_TYPE, NAME
+  showSpinner('Reading config…');
   slog('▶ Reading config…');
   const cr = await shellExec(
     '. ' + JSON.stringify(activeDrive) + ' 2>/dev/null && ' +
-    'printf "%s\\n%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}" "${NAME:-drive}"'
+    'printf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n" "$IMAGE_REAL" "$KEYFILE" "${CRYPTSETUP_BIN:-/data/data/com.termux/files/usr/bin/cryptsetup}" "${MKFS_F2FS_BIN:-/data/data/com.termux/files/usr/bin/mkfs.f2fs}" "${FS_TYPE:-f2fs}" "${NAME:-drive}"'
   );
   if (!cr.stdout || !cr.stdout.trim()) {
-    slog('✖ Could not read config. Tap "Write Default Config" first.'); _setupDone(); return;
+    slog('✖ Could not read config. Tap "Write Default Config" first.'); hideSpinner(); _setupDone(); return;
   }
-  const [IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, NAME] = cr.stdout.trim().split('\n');
+  const [IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN, MKFS_F2FS_BIN, FS_TYPE, NAME] = cr.stdout.trim().split('\n');
   if (!IMAGE_REAL || !KEYFILE) {
-    slog('✖ IMAGE_REAL or KEYFILE missing from config.'); _setupDone(); return;
+    slog('✖ IMAGE_REAL or KEYFILE missing from config.'); hideSpinner(); _setupDone(); return;
   }
   slog('  Image  : ' + IMAGE_REAL);
   slog('  Keyfile: ' + KEYFILE);
+  slog('  FS type: ' + (FS_TYPE || 'f2fs'));
 
   // Step 1: keyfile
+  showSpinner('Checking keyfile…');
   slog('▶ Checking keyfile…');
   const kfCheck = await shellExec('[ -f ' + JSON.stringify(KEYFILE) + ' ] && echo exists || echo missing');
   if (kfCheck.stdout.trim() === 'missing') {
@@ -1290,13 +1378,14 @@ async function setupStorage() {
       ' && dd if=/dev/urandom of=' + JSON.stringify(KEYFILE) + ' bs=64 count=1 2>&1' +
       ' && chmod 600 ' + JSON.stringify(KEYFILE)
     );
-    if (kg.errno !== 0) { slog('✖ Keyfile generation failed:\n' + (kg.stderr || kg.stdout)); return; }
+    if (kg.errno !== 0) { slog('✖ Keyfile generation failed:\n' + (kg.stderr || kg.stdout)); hideSpinner(); _setupDone(); return; }
     slog('  Keyfile created.');
   } else {
     slog('  Keyfile already exists — reusing.');
   }
 
   // Step 2: allocate image
+  showSpinner('Allocating image…');
   slog('▶ Allocating ' + size + unit + 'B image…');
   const imgDir = IMAGE_REAL.replace(/\/[^/]+$/, '');
   const alloc = await shellExec(
@@ -1304,10 +1393,11 @@ async function setupStorage() {
     ' && fallocate -l ' + size + unit + ' ' + JSON.stringify(IMAGE_REAL) + ' 2>&1' +
     ' || truncate -s ' + size + unit + ' ' + JSON.stringify(IMAGE_REAL)
   );
-  if (alloc.errno !== 0) { slog('✖ Allocation failed:\n' + (alloc.stderr || alloc.stdout)); return; }
+  if (alloc.errno !== 0) { slog('✖ Allocation failed:\n' + (alloc.stderr || alloc.stdout)); hideSpinner(); _setupDone(); return; }
   slog('  Image allocated.');
 
   // Step 3: LUKS2 format
+  showSpinner('Formatting LUKS2 (may take 10–30s)…');
   slog('▶ Formatting LUKS2…');
   const luks = await shellExec(
     JSON.stringify(CRYPTSETUP_BIN) +
@@ -1315,10 +1405,11 @@ async function setupStorage() {
     ' --hash sha512 --pbkdf argon2id --sector-size 4096 --batch-mode' +
     ' --key-file ' + JSON.stringify(KEYFILE) + ' ' + JSON.stringify(IMAGE_REAL) + ' 2>&1'
   );
-  if (luks.errno !== 0) { slog('✖ luksFormat failed:\n' + (luks.stderr || luks.stdout)); return; }
+  if (luks.errno !== 0) { slog('✖ luksFormat failed:\n' + (luks.stderr || luks.stdout)); hideSpinner(); _setupDone(); return; }
   slog('  LUKS2 header written.');
 
   // Step 4: open mapper
+  showSpinner('Opening LUKS mapper…');
   const SETUP_NAME = NAME + '_setup';
   slog('▶ Opening LUKS mapper (' + SETUP_NAME + ')…');
   const open = await shellExec(
@@ -1326,20 +1417,32 @@ async function setupStorage() {
     ' luksOpen ' + JSON.stringify(IMAGE_REAL) +
     ' ' + SETUP_NAME + ' --key-file ' + JSON.stringify(KEYFILE) + ' 2>&1'
   );
-  if (open.errno !== 0) { slog('✖ luksOpen failed:\n' + (open.stderr || open.stdout)); return; }
+  if (open.errno !== 0) { slog('✖ luksOpen failed:\n' + (open.stderr || open.stdout)); hideSpinner(); _setupDone(); return; }
   slog('  Mapper /dev/mapper/' + SETUP_NAME + ' active.');
 
-  // Step 5: F2FS format
-  slog('▶ Formatting F2FS…');
-  const f2fs = await shellExec('mkfs.f2fs -f /dev/mapper/' + SETUP_NAME + ' 2>&1');
-  if (f2fs.errno !== 0) { slog('✖ mkfs.f2fs failed:\n' + (f2fs.stderr || f2fs.stdout) + '\nIs f2fs-tools installed? (pkg install f2fs-tools)'); return; }
-  slog('  F2FS formatted.');
+  // Step 5: format inner filesystem
+  const fsType = FS_TYPE || 'f2fs';
+  showSpinner('Formatting ' + fsType + '…');
+  slog('▶ Formatting ' + fsType + '…');
+  let mkfsCmd;
+  if (fsType === 'f2fs') {
+    mkfsCmd = JSON.stringify(MKFS_F2FS_BIN || '/data/data/com.termux/files/usr/bin/mkfs.f2fs') + ' -f /dev/mapper/' + SETUP_NAME;
+  } else if (fsType === 'ext4') {
+    mkfsCmd = 'mke2fs -t ext4 -F /dev/mapper/' + SETUP_NAME;
+  } else {
+    slog('✖ Unsupported FS_TYPE: ' + fsType); await shellExec(JSON.stringify(CRYPTSETUP_BIN) + ' luksClose ' + SETUP_NAME + ' 2>/dev/null'); hideSpinner(); _setupDone(); return;
+  }
+  const f2fs = await shellExec(mkfsCmd + ' 2>&1');
+  if (f2fs.errno !== 0) { slog('✖ mkfs failed:\n' + (f2fs.stderr || f2fs.stdout)); await shellExec(JSON.stringify(CRYPTSETUP_BIN) + ' luksClose ' + SETUP_NAME + ' 2>/dev/null'); hideSpinner(); _setupDone(); return; }
+  slog('  ' + fsType + ' formatted.');
 
   // Step 6: close
+  showSpinner('Closing mapper…');
   slog('▶ Closing mapper…');
   await shellExec(JSON.stringify(CRYPTSETUP_BIN) + ' luksClose ' + SETUP_NAME + ' 2>&1');
+  hideSpinner();
   slog('');
-  slog('✅ Drive ready. Run imgdrive-ctl mount or tap Mount above.');
+  slog('✅ Drive ready. Tap Mount above.');
   _opBusy = false; _setButtons(false);
   await deepRefresh(); _burstPoll();
 }
