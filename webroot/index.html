@@ -439,6 +439,20 @@
   }
 
   /* ── Setup storage ── */
+  .size-presets {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+  }
+  .size-chip {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 14px;
+    color: var(--muted); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .size-chip:hover { border-color: var(--accent); color: var(--text); }
+  .size-chip.active {
+    background: var(--accent); border-color: var(--accent);
+    color: #fff;
+  }
   .setup-row {
     display: flex; gap: 8px; align-items: center; margin-bottom: 10px;
   }
@@ -614,13 +628,25 @@
   <!-- Setup Storage -->
   <div class="section-head">Setup Storage</div>
   <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
-    Allocates image, generates keyfile, formats LUKS2 + F2FS. Requires config paths to be set first.
+    Allocates image, generates keyfile, formats LUKS2 + inner filesystem. Config must be saved first.
+  </div>
+  <div class="size-presets" id="sizePresets">
+    <button class="size-chip" onclick="pickSize(1,'G',this)">1 GB</button>
+    <button class="size-chip" onclick="pickSize(5,'G',this)">5 GB</button>
+    <button class="size-chip active" onclick="pickSize(10,'G',this)">10 GB</button>
+    <button class="size-chip" onclick="pickSize(20,'G',this)">20 GB</button>
+    <button class="size-chip" onclick="pickSize(50,'G',this)">50 GB</button>
+    <button class="size-chip" onclick="pickSize(100,'G',this)">100 GB</button>
   </div>
   <div class="setup-row">
-    <input type="number" id="setupSize" min="1" value="10" placeholder="Size">
-    <select id="setupUnit">
+    <input type="number" id="setupSize" min="1" value="10" placeholder="Custom size" oninput="clearChips()">
+    <select id="setupUnit" onchange="clearChips()">
       <option value="G">GB</option>
       <option value="M">MB</option>
+    </select>
+    <select id="setupFs" title="Inner filesystem type (must match INNER_FS in config)">
+      <option value="f2fs">F2FS</option>
+      <option value="ext4">EXT4</option>
     </select>
   </div>
   <button class="setup-btn" onclick="setupStorage()">🛠 Create Encrypted Drive</button>
@@ -1245,10 +1271,21 @@ async function removeSlotN(n) {
   await refresh();
 }
 
+function pickSize(num, unit, el) {
+  document.getElementById('setupSize').value = num;
+  document.getElementById('setupUnit').value = unit;
+  document.querySelectorAll('#sizePresets .size-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+function clearChips() {
+  document.querySelectorAll('#sizePresets .size-chip').forEach(c => c.classList.remove('active'));
+}
+
 async function setupStorage() {
   if (_opBusy) { toast('⏳ Operation in progress'); return; }
   const size = parseInt(document.getElementById('setupSize').value, 10);
   const unit = document.getElementById('setupUnit').value;
+  const fs   = document.getElementById('setupFs').value;
   if (!size || size < 1) { toast('⚠️ Enter a valid size'); return; }
   _opBusy = true; _setButtons(true);
 
@@ -1261,8 +1298,8 @@ async function setupStorage() {
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  slog('▶ imgdrive-ctl setup ' + size + unit + '…');
-  slog('  (keyfile, image allocation, LUKS2 format, F2FS format)');
+  slog('▶ imgdrive-ctl setup ' + size + unit + ' (inner fs: ' + fs + ')…');
+  slog('  (keyfile, image allocation, LUKS2 format, ' + fs + ' format)');
   slog('');
 
   const r = await shellExec(

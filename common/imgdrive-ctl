@@ -42,6 +42,8 @@ LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
 BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"
 NSENTER_BIN="/data/data/com.termux/files/usr/bin/nsenter"
 ISODRIVE_BIN="/system/bin/isodrive"
+INNER_FS="f2fs"
+MKFS_BIN="/data/data/com.termux/files/usr/bin/mkfs.f2fs"
 
 VERBOSE=0
 COMMAND=""
@@ -198,7 +200,7 @@ mi_f2fs_ok() {
     fstype="$(printf '%s\n' "$entry" | cut -d'|' -f1)"
     src="$(printf '%s\n'    "$entry" | cut -d'|' -f2)"
     opts="$(printf '%s\n'   "$entry" | cut -d'|' -f3)"
-    [ "$fstype" = "f2fs" ] && [ "$src" = "$source" ] && mi_has_opt "$opts" rw
+    [ "$fstype" = "$INNER_FS" ] && [ "$src" = "$source" ] && mi_has_opt "$opts" rw
 }
 
 mi_bindfs_source_ok() {
@@ -431,11 +433,11 @@ cleanup_android_filesystem() {
     done
     refresh_mountinfo
     if g_real_f2fs_present; then
-        log "Unmounting F2FS: $REAL_MOUNT"
+        log "Unmounting ${INNER_FS}: $REAL_MOUNT"
         g_umount    "$REAL_MOUNT" >/dev/null 2>&1 || true
         refresh_mountinfo
         if g_real_f2fs_present; then
-            log "Trying lazy unmount of F2FS"
+            log "Trying lazy unmount of ${INNER_FS}"
             g_umount -l "$REAL_MOUNT" >/dev/null 2>&1 || true
             refresh_mountinfo
         fi
@@ -506,7 +508,7 @@ refresh_state() {
         elif [ "$LOOP_PRESENT" -eq 1 ] && [ "$LOOP_OK" -eq 0 ]; then
             STATE_REASON="image loop exists but is not 4096-byte DIO RW on the real image"
         elif [ "$REAL" -eq 0 ] && [ "$MAPPER" -eq 1 ]; then
-            STATE_REASON="LUKS is active but the expected RW F2FS mount is missing"
+            STATE_REASON="LUKS is active but the expected RW ${INNER_FS} mount is missing"
         elif [ "$BIND_OK" -eq 0 ] && [ "$REAL" -eq 1 ]; then
             STATE_REASON="bindfs view is missing or has unexpected source/ownership/mode"
         elif [ "$PUBLIC_OK" -eq 0 ] && [ "$BIND" -eq 1 ]; then
@@ -579,15 +581,15 @@ start_stage1() {
     log "LUKS mapper = ACTIVE"
 
     fs_type="$(/system/bin/blkid -o value -s TYPE "/dev/mapper/$NAME" 2>/dev/null)"
-    [ "$fs_type" = "f2fs" ] || die "Inner filesystem is not F2FS (detected: ${fs_type:-unknown})"
-    log "Inner filesystem = F2FS"
+    [ "$fs_type" = "$INNER_FS" ] || die "Inner filesystem is not ${INNER_FS} (detected: ${fs_type:-unknown}) — check INNER_FS in config"
+    log "Inner filesystem = ${INNER_FS}"
 
-    log "Mounting F2FS RW: $REAL_MOUNT"
-    g_mount -t f2fs -o rw "/dev/mapper/$NAME" "$REAL_MOUNT" >/dev/null 2>&1 || die "F2FS mount failed"
+    log "Mounting ${INNER_FS} RW: $REAL_MOUNT"
+    g_mount -t "$INNER_FS" -o rw "/dev/mapper/$NAME" "$REAL_MOUNT" >/dev/null 2>&1 || die "${INNER_FS} mount failed"
     refresh_mountinfo
-    g_real_f2fs_present || die "F2FS mount not visible after mounting"
-    log "F2FS = RW"
-    test_real_write || die "Real F2FS write test failed"
+    g_real_f2fs_present || die "${INNER_FS} mount not visible after mounting"
+    log "${INNER_FS} = RW"
+    test_real_write || die "Real ${INNER_FS} write test failed"
 
     log "Mounting bindfs: $REAL_MOUNT -> $USER_VIEW (${BIND_UID}:${BIND_GID} / $BIND_PERMS)"
     "$NSENTER_BIN" -t 1 -m -- env PATH="$PATH" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
@@ -727,13 +729,14 @@ cmd_setup() {
     "$CRYPTSETUP_BIN" luksOpen "$IMAGE_REAL" "$SETUP_NAME" \
         --key-file "$KEYFILE" || die "luksOpen failed"
 
-    # Step 5: mkfs.f2fs
-    log "Formatting F2FS…"
-    if ! mkfs.f2fs -f "/dev/mapper/$SETUP_NAME" >/dev/null 2>&1; then
+    # Step 5: mkfs (filesystem type from INNER_FS / MKFS_BIN in config)
+    [ -x "$MKFS_BIN" ] || { "$CRYPTSETUP_BIN" luksClose "$SETUP_NAME" 2>/dev/null || true; die "MKFS_BIN not found or not executable: $MKFS_BIN — install the matching package and update MKFS_BIN in config"; }
+    log "Formatting ${INNER_FS}…"
+    if ! "$MKFS_BIN" -f "/dev/mapper/$SETUP_NAME" >/dev/null 2>&1; then
         "$CRYPTSETUP_BIN" luksClose "$SETUP_NAME" 2>/dev/null || true
-        die "mkfs.f2fs failed — is f2fs-tools installed? (pkg install f2fs-tools)"
+        die "${INNER_FS} format failed — check MKFS_BIN in config (current: $MKFS_BIN)"
     fi
-    log "F2FS formatted"
+    log "${INNER_FS} formatted"
 
     # Step 6: close
     "$CRYPTSETUP_BIN" luksClose "$SETUP_NAME" || die "luksClose failed"
