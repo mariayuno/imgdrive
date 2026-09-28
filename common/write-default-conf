@@ -35,7 +35,9 @@ CRYPTSETUP_BIN="/data/data/com.termux/files/usr/bin/cryptsetup"
 LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
 BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"
 NSENTER_BIN="/data/data/com.termux/files/usr/bin/nsenter"
+MKFS_F2FS_BIN="/data/data/com.termux/files/usr/bin/mkfs.f2fs"
 ISODRIVE_BIN="/system/bin/isodrive"
+FS_TYPE="f2fs"
 CONF
 }
 
