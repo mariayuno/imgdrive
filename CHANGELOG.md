@@ -1,3 +1,7 @@
+## v3.4
+
+- fix: abort setup if image exists, fix log wiped on fast poll (12d994a)
+
 ## v3.3
 
 - fix: configurable inner filesystem (INNER_FS/MKFS_BIN), fix termux mkfs path, improve WebUI size picker (0039e1c)
