@@ -464,18 +464,7 @@
     border-radius: 8px; padding: 10px 10px;
     color: var(--text); font-size: 14px; outline: none; cursor: pointer;
   }
-  .file-pick-row { display: flex; gap: 8px; margin-bottom: 8px; }
-  .file-pick-row input[type=text] {
-    flex: 1; background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 12px; color: var(--text);
-    font-size: 13px; outline: none;
-  }
-  .file-pick-row input[type=text]:focus { border-color: var(--accent); }
-  .file-pick-btn {
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 12px; color: var(--text);
-    font-size: 16px; cursor: pointer;
-  }
+
   .setup-btn {
     background: linear-gradient(135deg,#d97706,#b45309); border: none;
     border-radius: 10px; padding: 11px 24px;
@@ -653,7 +642,6 @@
       <option value="M">MB</option>
     </select>
   </div>
-  <input type="file" id="filePicker" style="display:none" onchange="onFilePicked(this)">
   <button class="setup-btn" onclick="setupStorage()">🛠 Create Encrypted Drive</button>
   <div class="setup-log" id="setupLog"></div>
 
@@ -678,8 +666,22 @@
 
     <div class="keys-section-head">Add passphrase</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-      Authorised by existing keyfile. Passphrase is piped via shell — avoid shell-special characters for safety.
+      Avoid shell-special characters in passphrases.
     </div>
+    <!-- auth selector shared by both add operations -->
+    <div class="keys-section-head" style="margin-top:0">Authorise with</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="authKeyfileBtn" class="size-preset-btn active" style="flex:1" onclick="setAuthMode('keyfile')">Keyfile</button>
+      <button id="authPassBtn"    class="size-preset-btn"        style="flex:1" onclick="setAuthMode('pass')">Passphrase</button>
+    </div>
+    <div id="authKeyfileRow" class="keys-input-row" style="margin-bottom:12px">
+      <input type="text" id="authKeyfilePath" placeholder="leave blank to use config KEYFILE">
+    </div>
+    <div id="authPassRow" class="keys-input-row" style="margin-bottom:12px;display:none">
+      <input type="password" id="authPassphrase" placeholder="Existing passphrase…" autocomplete="current-password">
+    </div>
+
+    <div class="keys-section-head">Add passphrase slot</div>
     <div class="keys-input-row">
       <input type="password" id="newPassphrase" placeholder="New passphrase…" autocomplete="new-password">
       <button onclick="addPassphrase()">Add</button>
@@ -687,19 +689,16 @@
 
     <div class="keys-section-head">Add keyfile slot</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-      Pick an existing keyfile or enter a path — a new 64-byte keyfile will be generated if it doesn't exist.
+      Enter path on device — use /data/media/0/ (same as /sdcard/). A new 64-byte keyfile is generated if the path doesn't exist yet.
     </div>
-    <div class="file-pick-row">
-      <input type="text" id="newKeyfilePath" placeholder="/sdcard/Documents/imgdrive/backup.key">
-      <button class="file-pick-btn" onclick="pickFile('newKeyfilePath')" title="Browse">📂</button>
-    </div>
-    <div class="keys-input-row" style="margin-top:4px">
-      <button style="width:100%" onclick="addKeyfileSlot()">Add keyfile slot</button>
+    <div class="keys-input-row">
+      <input type="text" id="newKeyfilePath" placeholder="/data/media/0/Documents/imgdrive/backup.key">
+      <button onclick="addKeyfileSlot()">Add</button>
     </div>
 
     <div class="keys-section-head">Remove slot</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-      Authorised by current keyfile. Cannot remove the last slot.
+      Uses the auth selection above. Cannot remove the last slot.
     </div>
     <div class="keys-input-row">
       <input type="number" id="removeSlotNum" placeholder="Slot number" min="0" max="31">
@@ -1212,18 +1211,46 @@ async function _getImageAndCrypt() {
   return { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN };
 }
 
+// ── Key modal auth selector ───────────────────────────────────────────
+let _authMode = 'keyfile';
+function setAuthMode(mode) {
+  _authMode = mode;
+  document.getElementById('authKeyfileBtn').classList.toggle('active', mode === 'keyfile');
+  document.getElementById('authPassBtn').classList.toggle('active', mode === 'pass');
+  document.getElementById('authKeyfileRow').style.display = mode === 'keyfile' ? '' : 'none';
+  document.getElementById('authPassRow').style.display   = mode === 'pass'    ? '' : 'none';
+}
+
+// Returns auth args for cryptsetup. pipePrefix goes before the binary call.
+function _getAuth(cfg) {
+  if (_authMode === 'pass') {
+    const pass = document.getElementById('authPassphrase').value;
+    if (!pass) { klog('✖ Enter the existing passphrase to authorise'); return null; }
+    const esc = pass.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
+    return { authArg: '--key-file -', pipePrefix: "printf '%s' '" + esc + "' | " };
+  } else {
+    const override = document.getElementById('authKeyfilePath').value.trim();
+    const kf = override || cfg.KEYFILE;
+    if (!kf) { klog('✖ No keyfile — enter one or leave blank to use config KEYFILE'); return null; }
+    return { authArg: '--key-file ' + JSON.stringify(kf), pipePrefix: '' };
+  }
+}
+
 async function addPassphrase() {
   const pass = document.getElementById('newPassphrase').value;
   if (!pass) { toast('⚠️ Enter a passphrase'); return; }
   klogClear(); klog('▶ Adding passphrase slot…');
   const cfg = await _getImageAndCrypt();
   if (!cfg) { klog('✖ Could not read config'); return; }
-  const { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN } = cfg;
-  const escaped = pass.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
+  const auth = _getAuth(cfg);
+  if (!auth) return;
+  const { IMAGE_REAL, CRYPTSETUP_BIN } = cfg;
+  const esc = pass.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
   const r = await shellExec(
-    "printf '%s' '" + escaped + "' | " +
+    auth.pipePrefix +
+    "printf '%s' '" + esc + "' | " +
     JSON.stringify(CRYPTSETUP_BIN) +
-    ' luksAddKey --key-file ' + JSON.stringify(KEYFILE) +
+    ' luksAddKey ' + auth.authArg +
     ' ' + JSON.stringify(IMAGE_REAL) + ' - 2>&1'
   );
   if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
@@ -1236,21 +1263,28 @@ async function addPassphrase() {
 async function addKeyfileSlot() {
   const newkf = document.getElementById('newKeyfilePath').value.trim();
   if (!newkf) { toast('⚠️ Enter a keyfile path'); return; }
-  klogClear(); klog('▶ Generating keyfile: ' + newkf);
+  klogClear(); klog('▶ Preparing keyfile: ' + newkf);
   const cfg = await _getImageAndCrypt();
   if (!cfg) { klog('✖ Could not read config'); return; }
-  const { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN } = cfg;
+  const auth = _getAuth(cfg);
+  if (!auth) return;
+  const { IMAGE_REAL, CRYPTSETUP_BIN } = cfg;
   const dir = newkf.replace(/\/[^/]+$/, '');
   if (!(await fileExists(newkf))) {
-    const gen = await shellExec('mkdir -p ' + JSON.stringify(dir) + ' && dd if=/dev/urandom of=' + JSON.stringify(newkf) + ' bs=64 count=1 2>&1 && chmod 600 ' + JSON.stringify(newkf));
+    const gen = await shellExec(
+      'mkdir -p ' + JSON.stringify(dir) +
+      ' && dd if=/dev/urandom of=' + JSON.stringify(newkf) + ' bs=64 count=1 2>&1' +
+      ' && chmod 600 ' + JSON.stringify(newkf)
+    );
     if (gen.errno !== 0) { klog('✖ Keyfile generation failed:\n' + (gen.stderr || gen.stdout)); return; }
     klog('  New keyfile generated.');
   } else {
-    klog('  Keyfile already exists — adding as new slot.');
+    klog('  Keyfile exists — adding as new slot.');
   }
   const r = await shellExec(
+    auth.pipePrefix +
     JSON.stringify(CRYPTSETUP_BIN) +
-    ' luksAddKey --key-file ' + JSON.stringify(KEYFILE) +
+    ' luksAddKey ' + auth.authArg +
     ' ' + JSON.stringify(IMAGE_REAL) + ' ' + JSON.stringify(newkf) + ' 2>&1'
   );
   if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
@@ -1270,10 +1304,13 @@ async function removeSlotN(n) {
   klogClear(); klog('▶ Removing slot ' + n + '…');
   const cfg = await _getImageAndCrypt();
   if (!cfg) { klog('✖ Could not read config'); return; }
-  const { IMAGE_REAL, KEYFILE, CRYPTSETUP_BIN } = cfg;
+  const auth = _getAuth(cfg);
+  if (!auth) return;
+  const { IMAGE_REAL, CRYPTSETUP_BIN } = cfg;
   const r = await shellExec(
+    auth.pipePrefix +
     JSON.stringify(CRYPTSETUP_BIN) +
-    ' luksKillSlot --key-file ' + JSON.stringify(KEYFILE) +
+    ' luksKillSlot ' + auth.authArg +
     ' ' + JSON.stringify(IMAGE_REAL) + ' ' + n + ' 2>&1'
   );
   if (r.errno !== 0) { klog('✖ Failed:\n' + (r.stderr || r.stdout)); return; }
@@ -1296,33 +1333,6 @@ function setSize(num, unit, btn) {
     document.getElementById('setupSize').value = num;
     document.getElementById('setupUnit').value = unit;
   }
-}
-
-// ── File picker (Android /sdcard → /data/media/0) ─────────────────────
-let _filePickTarget = null;
-function pickFile(inputId) {
-  _filePickTarget = inputId;
-  document.getElementById('filePicker').click();
-}
-function onFilePicked(input) {
-  if (!input.files || !input.files[0]) return;
-  const f = input.files[0];
-  // file.name only gives filename — we need the path.
-  // On Android WebUI the full path is sometimes in webkitRelativePath or we fall back to name.
-  // Convert any /sdcard/ or /storage/emulated/0/ prefix → /data/media/0/
-  let path = '';
-  if (f.path) {                  // some environments expose f.path
-    path = f.path;
-  } else {
-    // Best we can do without shell: use filename as hint, note /sdcard default dir
-    path = '/sdcard/' + f.name;
-  }
-  path = path.replace(/^\/storage\/emulated\/0\//, '/data/media/0/')
-             .replace(/^\/sdcard\//, '/data/media/0/');
-  if (_filePickTarget) {
-    document.getElementById(_filePickTarget).value = path;
-  }
-  input.value = '';   // reset so same file can be picked again
 }
 
 async function setupStorage() {
