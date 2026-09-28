@@ -36,6 +36,15 @@ LOSETUP_BIN="/data/data/com.termux/files/usr/bin/losetup"
 BINDFS_BIN="/data/data/com.termux/files/usr/bin/bindfs"
 NSENTER_BIN="/data/data/com.termux/files/usr/bin/nsenter"
 ISODRIVE_BIN="/system/bin/isodrive"
+
+# Inner filesystem type — f2fs (default) or ext4.
+# Must match what was used when the image was first formatted.
+INNER_FS="f2fs"
+
+# mkfs binary for the chosen INNER_FS.
+# f2fs:  pkg install f2fs-tools  → /data/data/com.termux/files/usr/bin/mkfs.f2fs
+# ext4:  pkg install e2fsprogs   → /data/data/com.termux/files/usr/bin/mkfs.ext4
+MKFS_BIN="/data/data/com.termux/files/usr/bin/mkfs.f2fs"
 CONF
 }
 
