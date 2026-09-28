@@ -912,6 +912,13 @@ function applyState(s) {
 
   setInd('keyfile', s.keyfile,  s.keyfile  ? 'readable'   : 'missing');
   setInd('image',   s.img_real, s.img_real ? s.image_size || 'present' : 'missing');
+  // Disable Create Drive when image already exists — setup would destroy it
+  const setupBtn = document.querySelector('.setup-btn');
+  if (setupBtn && !_opBusy) {
+    setupBtn.disabled = !!s.img_real;
+    setupBtn.title = s.img_real ? 'Drive image already exists — delete it first to reprovision' : '';
+    setupBtn.textContent = s.img_real ? '✅ Drive Already Created' : '🛠 Create Encrypted Drive';
+  }
   setInd('mapper',  s.mapper,   s.mapper   ? 'active'     : 'inactive');
   setInd('f2fs',    s.f2fs,     s.f2fs     ? 'mounted'    : 'unmounted');
   setInd('bindfs',  s.bindfs,   s.bindfs   ? 'active'     : 'inactive');
@@ -926,8 +933,8 @@ function applyState(s) {
   document.getElementById('i-pub').textContent    = s.public_view || '—';
   document.getElementById('i-iso').textContent    = (s.iso_image && s.iso_image !== 'none') ? s.iso_image : '—';
 
-  // Only rewrite log DOM when content changes
-  if (s.log !== undefined && s.log !== _lastLog) {
+  // Only rewrite log DOM on deep refreshes (fast polls send log:"" which would wipe the display)
+  if (!s.fast && s.log !== undefined && s.log !== _lastLog) {
     _lastLog = s.log;
     const lb = document.getElementById('logBody');
     lb.textContent = s.log || '(empty)';
