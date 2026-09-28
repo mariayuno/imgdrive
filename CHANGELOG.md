@@ -1,3 +1,7 @@
+## v3.8
+
+- fix: simplify service.sh — block until CE+FUSE ready, then poll 30min for all deps (390f467)
+
 ## v3.7
 
 - Update KernelSU reference to SuKisu in workflow (83ffba0)
