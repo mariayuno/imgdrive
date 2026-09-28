@@ -126,6 +126,76 @@ curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/dow
 
 <!-- INSTALL_ONELINER_END -->
 
+---
+
+> [!CAUTION]
+> **The WebUI is experimental and not recommended for regular use.**
+>
+> The web interface (`http://localhost:…`) is provided for diagnostic visibility only. It has limited error handling, no confirmation dialogs for destructive actions, and its shell execution path depends on root API availability that may silently degrade. **Configure and operate imgdrive exclusively through the config file and `imgdrive-ctl` commands.** Do not rely on the WebUI for setup, mounting, or key management on a drive containing data you care about.
+
+---
+
+## Getting Started
+
+**1. Install Termux dependencies**
+
+Open Termux and run:
+
+```sh
+pkg install cryptsetup util-linux bindfs f2fs-tools
+```
+
+**2. Reboot**
+
+After installing the module and rebooting, imgdrive writes a default config on first boot at:
+
+```
+/sdcard/Documents/imgdrive/imgdrive.conf
+```
+
+**3. Edit the config**
+
+Open the config in any text editor and set at minimum:
+
+```sh
+IMAGE_REAL="/data/media/0/imgdrive/drive.img"   # path to your image file
+KEYFILE="/sdcard/Documents/imgdrive/imgdrive.key" # path to your LUKS keyfile
+NAME="drive"                                       # name for the dm-crypt mapper
+INNER_FS="f2fs"                                    # f2fs or ext4 — must match what you format with
+```
+
+See the full [Configuration](#configuration) section for all options.
+
+**4. Create the encrypted drive**
+
+In a root shell (Termux with `su`):
+
+```sh
+imgdrive-ctl setup 10G   # replace 10G with your desired size
+```
+
+This generates the keyfile, allocates the image, formats LUKS2, and formats the inner filesystem. It will refuse to run if the image already exists.
+
+**5. Mount**
+
+```sh
+imgdrive-ctl mount
+```
+
+Your drive appears at `/storage/emulated/0/<NAME>` in any file manager.
+
+**6. Toggle between local and USB**
+
+```sh
+imgdrive-ctl toggle   # Stage 1 ↔ Stage 2
+```
+
+Or tap the **Action** button in Magisk / KernelSU — it runs `toggle` and prints the old and new state.
+
+From here on, **the drive auto-mounts at every boot** once internal storage is decrypted (no interaction needed).
+
+---
+
 ## Configuration
 
 `imgdrive.conf` is a plain shell-sourced file. It is written once on first boot and **never overwritten** by module updates.
