@@ -1,3 +1,7 @@
+## v3.5
+
+- Minor update
+
 ## v3.4
 
 - fix: abort setup if image exists, fix log wiped on fast poll (12d994a)
