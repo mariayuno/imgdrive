@@ -151,5 +151,74 @@ for conf in "$PRIMARY_CONF" "$CONFD_DIR"/*.conf; do
     _mount_drive "$conf" &
 done
 
+# ---------------------------------------------------------------------------
+# PHASE 4: inotify block-device watcher — remount on SD card reappearance
+# ---------------------------------------------------------------------------
+_sep "PHASE 4: inotify block watcher"
+
+TERMUX_BIN="/data/data/com.termux/files/usr/bin"
+_INOTIFY="$TERMUX_BIN/inotifywait"
+_PIDFILE="/tmp/.imgdrive_watcher.pid"
+
+if [ ! -x "$_INOTIFY" ]; then
+    _log "inotifywait not found — block watcher skipped"
+else
+    _log "Starting block watcher (inotifywait)"
+
+    (
+        "$_INOTIFY" -m -q -e create /dev/block 2>/dev/null | while IFS= read -r _line; do
+
+            _dev="${_line##* }"
+            case "$_dev" in mmcblk1) : ;; *) continue ;; esac
+
+            # Ignore if a waiter is still alive
+            if [ -f "$_PIDFILE" ] && kill -0 "$(cat "$_PIDFILE")" 2>/dev/null; then
+                _log "block watcher: $_dev appeared but waiter still running — ignored"
+                continue
+            fi
+
+            _log "block watcher: $_dev appeared — launching deferred mount"
+
+            (
+                _DEADLINE=$(( $(date +%s) + 7200 ))
+
+                # Step 1: wait for /sdcard to be mounted before touching any paths
+                while [ "$(date +%s)" -lt "$_DEADLINE" ]; do
+                    mountpoint -q /sdcard 2>/dev/null && break
+                    sleep 5
+                done
+
+                if ! mountpoint -q /sdcard 2>/dev/null; then
+                    _log "block watcher: /sdcard never mounted — giving up"
+                    rm -f "$_PIDFILE"; exit 1
+                fi
+
+                # Step 2: poll for config + image
+                while [ "$(date +%s)" -lt "$_DEADLINE" ]; do
+                    IMAGE_REAL=""
+                    [ -f "$PRIMARY_CONF" ] && . "$PRIMARY_CONF" 2>/dev/null
+                    if [ -n "$IMAGE_REAL" ] && [ -f "$IMAGE_REAL" ]; then
+                        _log "block watcher: image ready ($IMAGE_REAL) — mounting"
+                        "$CTL" -c "$PRIMARY_CONF" mount >> "$LOGFILE" 2>&1 \
+                            && _log "block watcher: mount SUCCESS" \
+                            || _log "block watcher: mount failed (exit $?)"
+                        break
+                    fi
+                    _log "block watcher: image not ready — retry in 20s ($(( _DEADLINE - $(date +%s) ))s remaining)"
+                    sleep 20
+                done
+
+                [ "$(date +%s)" -ge "$_DEADLINE" ] && _log "block watcher: timed out after 2h"
+                rm -f "$_PIDFILE"
+            ) &
+
+            echo $! > "$_PIDFILE"
+
+        done
+    ) &
+
+    _log "block watcher started (PID $!)"
+fi
+
 _sep "service.sh complete — handlers running in background"
 wait
