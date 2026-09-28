@@ -17,7 +17,7 @@
   <img alt="Root" src="https://img.shields.io/badge/root-Magisk%20%7C%20KernelSU%20%7C%20APatch-black">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue">
 <!-- VERSION_BADGE_START -->
-<img alt="Version" src="https://img.shields.io/badge/version-v3.8-7c3aed?style=flat-square&logo=github&logoColor=white">
+<img alt="Version" src="https://img.shields.io/badge/version-v3.9-7c3aed?style=flat-square&logo=github&logoColor=white">
 <!-- VERSION_BADGE_END -->
 </p>
 
@@ -96,28 +96,28 @@ image.img  →  isodrive -rw  →  USB gadget LUN  →  PC block device
 **KernelSU / SuKisu**
 
 ```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v3.8/imgdrive-v3.8.zip && /data/adb/ksud module install /tmp/imgdrive.zip
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v3.9/imgdrive-v3.9.zip && /data/adb/ksud module install /tmp/imgdrive.zip
 ```
 
 **Magisk**
 
 ```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v3.8/imgdrive-v3.8.zip && magisk --install-module /tmp/imgdrive.zip
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v3.9/imgdrive-v3.9.zip && magisk --install-module /tmp/imgdrive.zip
 ```
 
 **APatch**
 
 ```sh
-curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v3.8/imgdrive-v3.8.zip && /data/adb/apd module install /tmp/imgdrive.zip
+curl -Lo /tmp/imgdrive.zip https://github.com/rexackermann/imgdrive/releases/download/v3.9/imgdrive-v3.9.zip && /data/adb/apd module install /tmp/imgdrive.zip
 ```
 
 </td>
 <td valign="top" align="right" width="30%">
 
 <p align="right">
-<img alt="Version" src="https://img.shields.io/badge/v3.8-7c3aed?style=for-the-badge&logo=github&logoColor=white"><br>
-<img alt="Package" src="https://img.shields.io/badge/package-imgdrive-v3.8.zip-2563eb?style=for-the-badge&logo=files&logoColor=white"><br>
-<img alt="Version Code" src="https://img.shields.io/badge/version%20code-29-0891b2?style=for-the-badge">
+<img alt="Version" src="https://img.shields.io/badge/v3.9-7c3aed?style=for-the-badge&logo=github&logoColor=white"><br>
+<img alt="Package" src="https://img.shields.io/badge/package-imgdrive-v3.9.zip-2563eb?style=for-the-badge&logo=files&logoColor=white"><br>
+<img alt="Version Code" src="https://img.shields.io/badge/version%20code-30-0891b2?style=for-the-badge">
 </p>
 
 </td>

@@ -1,3 +1,7 @@
+## v3.9
+
+- feat: inotify block watcher for SD card remount (PHASE 4) (d3faff9)
+
 ## v3.8
 
 - fix: simplify service.sh — block until CE+FUSE ready, then poll 30min for all deps (390f467)
